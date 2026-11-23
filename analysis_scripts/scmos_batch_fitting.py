@@ -1,277 +1,134 @@
 #!/usr/bin/python
 #
-# Batch multifit analysis.
-# 
-# Colenso 05_30_18
+# Batch multifit analysis: fit every STORM movie and bead movie, then convert
+# the results to .bin files and rendered .tiff images.
+#
+# Colenso 05_30_18. Rewritten 2026-11 for Python 3.12 / any OS:
+#  - paths built with os.path.join (were Windows "\\" strings)
+#  - storm-analysis scripts found from the installed package, run with the
+#    current Python (were hardcoded to C:/Program Files/Python36/...)
+#  - fix: the command list was created once, outside the channel loop, but the
+#    batch was run inside it, so every earlier channel's fits were launched
+#    again for each later channel
+#  - failed fits raise an error (batchRun ignored exit codes)
+#  - "already done" checks looked for .bin files that are never written to
+#    bins/; removed. storm-analysis resumes existing .hdf5 files, so a re-run
+#    picks up where it stopped instead of starting over (kept on purpose here)
+#  - bead/conversion/rendering steps unchanged in what they produce
 
 import glob
-import os, time, datetime
-import multiprocessing
-import signal
-import subprocess
-import sys
-import threading
+import os
 
-import numpy
-import math
-from subprocess import *
-import datareader
-import re
-import arraytoimage
-import i3togrid
-from PIL import Image
-import storm_analysis.sa_library.sa_h5py as saH5Py
-
-import storm_analysis.sa_library.batch_run as batchRun
 import storm_analysis.sa_library.datareader as datareader
-# import storm_analysis.Name_Correction as N_C  # lab-local module, not in any repo; only use (line 44) is commented out
 
-from .gen_bead_warp_hcam import * 
+try:
+    from analysis_scripts.pipeline_utils import (HDF5_TO_BIN, HDF5_TO_IMAGE, PYTHON,
+                                                 PipelineError, fit_cmd, run_jobs)
+except ImportError:
+    from pipeline_utils import (HDF5_TO_BIN, HDF5_TO_IMAGE, PYTHON,
+                                PipelineError, fit_cmd, run_jobs)
 
-def batch_fitting(expfolder, max_processes, selected_channels, debug=False):
-    # set path to raw data files
-    #expfolder = "Z:\\Chenghang\\chenghaz006_1.31.2019\\"
+try:
+    from .gen_bead_warp_hcam import *  # noqa: F401,F403  (kept: original import)
+except ImportError:
+    pass
+
+# Bead movie -> (output suffix, XML). Unchanged from the original.
+BEAD_FITS = [("_Vis647mlist.hdf5", "Visbead_647.xml"),
+             ("_561mlist.hdf5", "Visbead_561.xml"),
+             ("_488mlist.hdf5", "Visbead_488.xml"),
+             ("_750mlist.hdf5", "IRbead_750.xml"),
+             ("_IR647mlist.hdf5", "IRbead_647.xml")]
+
+OUTPUT_CHANNELS = ["750storm", "647storm", "561storm", "488storm"]
+RENDER_SIGMA = {"750storm": 1, "647storm": 0.5, "561storm": 0.5, "488storm": 1}
+STORM_IMAGE_SCALE = 10
+
+
+def batch_fitting(expfolder, max_processes, selected_channels, debug=False,
+                  log=print, cancel_event=None, render=True):
+    """Returns a dict with lists of the files produced."""
     expfolder = os.path.normpath(expfolder)
-    XML_folder = expfolder + "\\XMLs\\"
+    xml_folder = os.path.join(expfolder, "XMLs")
+    input_directory = os.path.join(expfolder, "acquisition")
+    bin_folder = os.path.join(input_directory, "bins")
+    real_bins = os.path.join(input_directory, "real_bins")
+    storm_tiffs = os.path.join(expfolder, "stormtiffs")
 
-    # set directory for raw STORM .DAX files
-    input_directory = expfolder + "\\acquisition\\"
+    if not os.path.isdir(input_directory):
+        raise PipelineError(f"No acquisition folder in {expfolder}")
+    for d in (os.path.join(input_directory, "bead_registration"), bin_folder, real_bins):
+        os.makedirs(d, exist_ok=True)
 
-    #Correct the file names if there is less than 11 images taken. (might need modification if there are more than 100 images in the future)
-    # h5_files =glob.glob(input_directory + "647storm_" + "*.dax")
-    # test = os.path.basename(h5_files[0])
-    # if len(test) == 14:
-        # N_C.CorrectIt(input_directory)
-
-
-    # make directory for bead registration output
-    # create new directory for bead alignment files
-    if not os.path.exists(input_directory + "bead_registration\\"):
-        os.mkdir(input_directory + "bead_registration\\")
-    bead_registration = input_directory + "bead_registration\\"
-
-    # create new directory for bin files
-    if not os.path.exists(input_directory + "bins\\"):
-        os.mkdir (input_directory + "bins\\")
-    bin_folder = input_directory + "bins\\"
-
-    # If there are no previous STORM molecule lists found, start the STORM analysis
-    cmd_lines = []
-    channels = selected_channels 
-    
-    for channel in channels:
-        
-        if len(glob.glob(bin_folder + "{}storm_*_mlist.bin".format(channel))) == 0: 
-        
-            base = str(channel)
-            # set output directory for analyzed molecule lists
-            output_directory = input_directory + "bins\\"
-            # set path to analysis parameters
-            multi_xml = XML_folder + base + ".xml"
-            # set minimum length of .DAX file for analysis
-            minimum_length = 0
-            # create list of all .DAX files in STORM directory
-            dax_files =glob.glob(input_directory + base + "*.dax")
-            # set path to multi-fit analysis code
-            mufit_exe = "C:/Program Files/Python36/Lib/site-packages/storm_analysis/sCMOS/scmos_analysis.py"
-
-            # start processes
-            # for each STORM movie
-            for movie_file in dax_files:
-                # read the file information and determine if it is long enough
-                movie_obj = datareader.inferReader(movie_file)
-                if(movie_obj.filmSize()[2] > minimum_length):
-                    # set file name parameters for jobs
-                    print("Analyzing:", movie_file,"with xml file",multi_xml)
-                    basename = os.path.basename(movie_file)
-                    mlistname = output_directory + "/" + basename[:-4] + "_mlist.hdf5"
-                    # start fitting
-                    cmd_lines.append(['python', mufit_exe,
-                                      "--movie", movie_file,
-                                      "--bin", mlistname,
-                                      "--xml", multi_xml])
-        # run the fitting in a batch with the specified number of concurrent processes
-        batchRun.batchRun(cmd_lines, max_processes = max_processes)
-
-    # If there are no previous bead molecule lists found, start the bead analysis
-    if not os.path.isfile(bin_folder + "Regbead_1_00_647mlist.bin"):
-
-        # set bead fitting channels
-        channel = "Regbead"
-
-        # setup automated bead analysis
+    # 1. STORM movies, all selected channels in one batch.
+    storm_cmds = []
+    for channel in selected_channels:
         base = str(channel)
-        # set output directory for analyzed molecule lists
-        output_directory = input_directory + "bins\\"
-        # set path to analysis parameters
-        xml = ["Visbead_647.xml","Visbead_561.xml","Visbead_488.xml","IRbead_750.xml","IRbead_647.xml"]
-       
-        # set minimum length of .DAX file for analysis
-        minimum_length = 1
-     
-        # create list of all .DAX files in bead directory
-        dax_files =glob.glob(input_directory + base + "*.dax")
-        #print (dax_files)
-        
-        # set path to multi-fit analysis code
-        mufit_exe = "C:/Program Files/Python36/Lib/site-packages/storm_analysis/sCMOS/scmos_analysis.py"
+        xml = os.path.join(xml_folder, base + ".xml")
+        movies = sorted(glob.glob(os.path.join(input_directory, base + "*.dax")))
+        if not movies:
+            log(f"{base}: no movies found")
+            continue
+        if not os.path.isfile(xml):
+            raise PipelineError(f"Missing parameters file {xml}")
+        for movie_file in movies:
+            if datareader.inferReader(movie_file).filmSize()[2] <= 0:
+                continue
+            mlist = os.path.join(bin_folder, os.path.basename(movie_file)[:-4] + "_mlist.hdf5")
+            log(f"Analyzing {os.path.basename(movie_file)} with {os.path.basename(xml)}")
+            storm_cmds.append(fit_cmd(movie_file, mlist, xml))
+    if not storm_cmds:
+        raise PipelineError("No STORM movies found for the selected channels in " + input_directory)
+    run_jobs(storm_cmds, max_processes, log, cancel_event, label="STORM fit")
 
-        # start processes
-        cmd_lines = []
-        for movie_file in dax_files:
-            movie_name = os.path.basename(movie_file[:-4])
-            # run analysis on Visbeads
-            movie_obj = datareader.inferReader(movie_file)
-            if(movie_obj.filmSize()[2] > minimum_length):
+    # 2. Bead registration movies (Regbead*.dax), each fitted with 5 bead XMLs.
+    bead_cmds = []
+    for movie_file in sorted(glob.glob(os.path.join(input_directory, "Regbead*.dax"))):
+        if datareader.inferReader(movie_file).filmSize()[2] <= 1:
+            continue
+        stem = os.path.join(bin_folder, os.path.basename(movie_file)[:-4])
+        for suffix, xml_name in BEAD_FITS:
+            xml = os.path.join(xml_folder, xml_name)
+            if not os.path.isfile(xml):
+                raise PipelineError(f"Missing bead parameters file {xml}")
+            log(f"Analyzing {os.path.basename(movie_file)} with {xml_name}")
+            bead_cmds.append(fit_cmd(movie_file, stem + suffix, xml))
+    if bead_cmds:
+        run_jobs(bead_cmds, max_processes, log, cancel_event, label="bead fit")
+    else:
+        log("No Regbead*.dax bead movies found; skipping bead fitting.")
 
-                basename = os.path.basename(movie_file)
-                mlistname = output_directory + "/" + basename[:-4]
-                # fit 647 portion of Visbead dax file
-                cmd_lines.append(['python', mufit_exe,
-                                  "--movie", movie_file,
-                                  "--bin", mlistname + "_Vis647mlist.hdf5",
-                                  "--xml", XML_folder + xml[0]])
-                print("Analyzing:", movie_file,"with xml file",xml[0])
-                # fit 561 portion of Visbead dax file
-                cmd_lines.append(['python', mufit_exe,
-                                  "--movie", movie_file,
-                                  "--bin", mlistname + "_561mlist.hdf5",
-                                  "--xml", XML_folder + xml[1]])
-                print("Analyzing:", movie_file,"with xml file",xml[1])
-                # fit 488 portion of Visbead dax file
-                cmd_lines.append(['python', mufit_exe,
-                                  "--movie", movie_file,
-                                  "--bin", mlistname + "_488mlist.hdf5",
-                                  "--xml", XML_folder + xml[2]])
-                print("Analyzing:", movie_file,"with xml file",xml[2])
+    # 3. Convert STORM results to .bin.
+    h5_by_channel = {c: sorted(glob.glob(os.path.join(bin_folder, c + "*.hdf5"))) for c in OUTPUT_CHANNELS}
+    conv = []
+    bins = []
+    for c, files in h5_by_channel.items():
+        for h5 in files:
+            out = os.path.join(real_bins, os.path.basename(h5)[:-5] + ".bin")
+            conv.append([PYTHON, HDF5_TO_BIN, "--hdf5", h5, "--bin", out])
+            bins.append(out)
+    run_jobs(conv, max_processes, log, cancel_event, label="conversion")
 
-                mlistname = output_directory + "/" + basename[:-4]
-                # fit 750 portion of IRbead dax file
-                cmd_lines.append(['python', mufit_exe,
-                                  "--movie", movie_file,
-                                  "--bin", mlistname + "_750mlist.hdf5",
-                                  "--xml", XML_folder + xml[3]])
-                print("Analyzing:", movie_file,"with xml file",xml[3])
+    # 4. Render STORM images.
+    tiffs = []
+    if render:
+        os.makedirs(storm_tiffs, exist_ok=True)
+        cmds = []
+        for c, files in h5_by_channel.items():
+            for h5 in files:
+                out = os.path.join(storm_tiffs, os.path.basename(h5)[:-5] + ".tiff")
+                cmds.append([PYTHON, HDF5_TO_IMAGE, "--image", out, "--bin", h5,
+                             "--scale", str(STORM_IMAGE_SCALE), "--sigma", str(RENDER_SIGMA[c])])
+                tiffs.append(out)
+        run_jobs(cmds, max_processes, log, cancel_event, label="render")
 
-                mlistname = output_directory + "/" + basename[:-4]
-                # fit 750 portion of IRbead dax file
-                cmd_lines.append(['python', mufit_exe,
-                                  "--movie", movie_file,
-                                  "--bin", mlistname + "_IR647mlist.hdf5",
-                                  "--xml", XML_folder + xml[4]])
-                print("Analyzing:", movie_file,"with xml file",xml[4])
-                
-        batchRun.batchRun(cmd_lines, max_processes = max_processes)
-
-    # where are your data?
-    storm_folder = expfolder + "\\acquisition\\"
-    input_directory = storm_folder + "bins\\"
-    output_directory = storm_folder + "real_bins\\"
-
-    # Mkdir for the output folder.
-    if not os.path.exists(output_directory):
-        os.mkdir(output_directory)
-
-    # which imaging channels are you saving?
-    channels = ["750storm", "647storm", "561storm","488storm"]
-
-    # setup automated analysis
-    for channel in channels:
-     #for  i in range (iterations):
-        base = str(channel)
-     # create list of all .hdf5 files in BIN directory
-        h5_files =glob.glob(input_directory + base + "*.hdf5")
-     # set path to multi-fit analysis code
-        hdf5_to_bin = "C:/Program Files/Python36/Lib/site-packages/storm_analysis/sa_utilities/hdf5_to_bin.py"
-
-     # start processes
-        cmd_lines = []
-        for h5_file in h5_files:
-                
-            print ("Found:", h5_file)
-            h5_filename = os.path.basename(h5_file)
-            print("Converting:",h5_filename)
-            bin_out_name = output_directory + h5_filename[:-5] + ".bin"
-            cmd_lines.append(['python', hdf5_to_bin,
-                                "--hdf5", h5_file,
-                                "--bin", bin_out_name
-                                ])
-        batchRun.batchRun(cmd_lines, max_processes = max_processes)
-            
-            
-    # Convert the .hdf5 files to .tiff images. 
-    storm_image_scale = int(10)
-    # where do you want to save the data?
-    output_directory = expfolder + "\\stormtiffs\\"
-    # Mkdir for the output folder. --- 7.30.2018. 
-    if not os.path.exists(output_directory):
-        os.mkdir(output_directory)
-    # which imaging channels are you saving?
-    channels = ["750storm", "647storm", "561storm","488storm"]
-    # what sigma to use for rendering images in [channels]?
-    sigma_channels = [1,0.5,0.5,1]
-    # setup automated analysis
-    for channel in channels:
-     #for  i in range (iterations):
-        base = str(channel)
-     # create list of all .hdf5 files in BIN directory
-        h5_files =glob.glob(input_directory + base + "*.hdf5")
-     # set path to multi-fit analysis code
-        hdf5_to_image = "C:/Program Files/Python36/Lib/site-packages/storm_analysis/sa_utilities/hdf5_to_image.py"
-
-     # start processes
-        cmd_lines = []
-        for h5_file in h5_files:
-            if base == "750storm":
-                sigma = sigma_channels[0]
-            elif base == "647storm":
-                sigma = sigma_channels[1]
-            elif base == "561storm":
-                sigma = sigma_channels[2]
-            elif base == "488storm":
-                sigma = sigma_channels[3]
-                
-            print ("Found:", h5_file)
-            h5_filename = os.path.basename(h5_file)
-            print("Analyzing:",h5_filename,"with sigma ",str(sigma))
-            tiff_out_name = output_directory + h5_filename[:-5] + ".tiff"
-            cmd_lines.append(['python', hdf5_to_image,
-                                "--image", tiff_out_name,
-                                "--bin", h5_file,
-                                "--scale", str(storm_image_scale),
-                                "--sigma", str(sigma)])
-        batchRun.batchRun(cmd_lines, max_processes = max_processes)
-            
-
-    # perform bead registration
-        
-    # MATLAB Code 
-    # print ("starting matlab gen_bead_warp analysis")
-    # if not os.path.isfile(bead_registration + 'Cumulative_distribution_for_registration_self.tif'):
-    #    matsub = ("""matlab -nosplash -nodisplay -r "arg1='""" + expfolder + """'; gen_bead_warp_hcam" """)
-    #    subprocess.Popen(matsub ,shell=True)
-        
-    # while not os.path.isfile(bead_registration + 'Cumulative_distribution_for_registration_self.tif'):
-    #     time.sleep(10)
-    # print ("Bead alignment is finished")  
-    # print("The test part is skipped" + "\n" + "Done! ")
+    # Bead registration (gen_bead_warp_hcam) was commented out in the original
+    # and is still not run here.
+    log(f"Batch fitting done: {len(storm_cmds)} STORM fits, {len(bead_cmds)} bead fits, "
+        f"{len(bins)} .bin files, {len(tiffs)} images.")
+    return {"storm_fits": len(storm_cmds), "bead_fits": len(bead_cmds), "bins": bins, "tiffs": tiffs}
 
 
-    #The following codes are for testing purpose. No need if everything works well in previous codes. 
-    #Note that the following code won't end as expected for a customized because the test images are saved under 'Z:\Colenso\05_25_18_sample5\acquisition\bead_registration'
-
-        #test warping transform on beads (only if two bead passes)
-    #if not os.path.isfile(bead_registration + 'Cumulative_distribution_for_registration_1_based_on_2.fig'):
-    #    print ("starting matlab_test_bead_warp")
-    #    matsub = ("""matlab -nosplash -nodisplay -r "arg1='""" + expfolder + """'; test_bead_warp_hcam" """)
-    #    subprocess.Popen(matsub ,shell=True)
-
-    #while not os.path.isfile(bead_registration + 'Cumulative_distribution_for_registration_1_based_on_2.fig'):
-    #    time.sleep(10)
-    #print ("Bead testing is finished")  
 if __name__ == "__main__":
-    exp_folder = "C:/Users/Vatsal/QT_Projects/New_Pipeline/4color_test"
-    # exp_folder = "C:/Users/Jerry Yang/Desktop/Test_bead_data" 
-    selected_channels = ['750storm_']
-    max_processes = 50
-    batch_fitting(exp_folder, max_processes, selected_channels, debug=True)
+    import sys
+    batch_fitting(sys.argv[1], 2, sys.argv[2:] or ["647"])
