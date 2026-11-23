@@ -27,7 +27,7 @@ def run_bead_processing(expfolder):
 
     # Read in parameters from yaml file 
     with open('./configs/bead_analysis_params.yml') as f:
-            config = yaml.load(f)
+            config = yaml.safe_load(f)
 
     shape = (config['shape_h'], config['shape_w'])
     scaled_shape = (config['shape_h'] * config['scale'], 

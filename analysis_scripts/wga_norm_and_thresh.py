@@ -79,7 +79,7 @@ def wga_norm_and_thresh(exp_folder, alignment_channel):
     
     # Read in parameters from yaml file 
     with open('./configs/bead_analysis_params.yml') as f:
-            config = yaml.load(f)
+            config = yaml.safe_load(f)
 
     shape = (config['shape_h'], config['shape_w']) 
     

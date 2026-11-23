@@ -58,7 +58,7 @@ def gen_bead_warp_and_chrom_align(local_exp, alignment_channel):
      
     # Read in parameters from yaml file 
     with open('./configs/bead_analysis_params.yml') as f:
-        config = yaml.load(f)
+        config = yaml.safe_load(f)
 
     frame_750 = config['frame_750']
     frame_647 = config['frame_647']
