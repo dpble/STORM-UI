@@ -3,7 +3,7 @@
 The automated tests cover the code paths, but not how the app feels to use. Run
 this once on your own machine (and again on the lab PC when you can).
 
-Setup: make a simulated experiment and open the app.
+Setup: make a simulated experiment and open the app. Use a new or empty demo folder, never an existing experiment.
 
 ```
 cd STORM-UI
@@ -36,10 +36,10 @@ Tick each box. If something is off, write down what you did and what you saw.
 - [ ] **Edit Test Parameters…** → set the 647 end frame to 10 → **Update**. Run Test Fit again. Circles only appear on frames 1 to 10 now.
 - [ ] Movie number **-1** → Run Test Fit, then press **Cancel** straight away. It stops and the buttons come back.
 
-## Full analysis
-- [ ] Tick **647** and **750**, alignment **561**. **Set Frame Ranges…** shows the current values; OK closes it and it does not reopen.
-- [ ] **Run Full Analysis**. If results already exist, it says "Existing results found" and that nothing will be deleted. Continue.
-- [ ] Batch fitting finishes (4 STORM fits, 5 bead fits in the log). Then XY alignment stops with a message that says which step failed and why (missing conventional images). Expected with simulated data.
+## Batch fitting
+- [ ] Tick **647** and **750**. **Set Frame Ranges…** shows the current values; OK closes it and it does not reopen.
+- [ ] **Run Batch Fit**. The log reports 4 STORM fits and 5 bead fits, followed by the new output folder under `batch_fits/`. XY and Z alignment do not run.
+- [ ] Run it again. A new output folder is created; the earlier output folder is still present.
 - [ ] Close the window while a job runs: cancellation is requested and the window stays open until the job exits. Close it again when idle.
 
 ## Notes

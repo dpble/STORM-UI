@@ -19,8 +19,13 @@ instructions for Fiji, macros and XML paths still apply to XY/Z alignment.
 Open **Help** in the app for the quick start and viewer controls. In short:
 choose the experiment folder (with `acquisition/` and `XMLs/`), tick channels,
 **Run Test Fit** on one movie to check the XML parameters (the result opens in
-the viewer), then **Run Full Analysis**. Jobs run in the background with a
-progress bar, a log and Cancel. Test Fit stores results separately in `acquisition/test_fits/`. Cancel stops fitting; during legacy alignment it takes effect at the next stage boundary.
+the viewer), then **Run Batch Fit**. Jobs run in the background with a progress
+bar, log, and Cancel. Test Fit writes to `acquisition/test_fits/`. Each successful
+batch writes to a new `batch_fits/run-*` folder and never resumes another run.
+Previously completed outputs are not overwritten. XY and Z alignment are not
+available in the GUI. Use only trusted experiment XML and calibration files:
+storm-analysis can load calibration files using pickle.
+
 
 ## Tests
 
@@ -34,8 +39,8 @@ hands-on checklist. `PORTING_LOG.md` lists every change and bug fix.
 
 | Step | Status |
 |------|--------|
-| Viewer, Test Fit, batch fitting (STORM + beads), .bin and .tiff output | Working, tested on macOS. Linux and Windows CI is pending workflow upload |
-| XY and Z alignment | Not yet ported: needs real conventional/bead images and Fiji. See PORTING_LOG.md |
+| Viewer, Test Fit, batch fitting (STORM + beads), .bin and .tiff output | Automated tests on Windows, macOS, and Ubuntu |
+| XY and Z alignment | Not available in the GUI; needs real lab data and Fiji validation. See PORTING_LOG.md |
 
 ---
 

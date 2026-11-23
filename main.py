@@ -43,8 +43,6 @@ from gui.pipeline_worker import start_worker
 # Pipeline Imports 
 from analysis_scripts import fitting_parameters_evaluation as fitting_func 
 from analysis_scripts import scmos_batch_fitting as scmos_func
-from analysis_scripts import XY_alignment as xy_align_func
-from analysis_scripts import z_alignment as z_align_func
 
 # Makes sure the GUI looks normal 
 if hasattr(QtCore.Qt, 'AA_EnableHighDpiScaling'):
@@ -630,55 +628,28 @@ class Window(QtWidgets.QMainWindow):
                                      f"{os.path.basename(h5)}.", 15000)
 
     def runAnalysis(self):
-        """Full analysis in the background: batch fitting, then XY and Z alignment."""
+        """Run batch fitting only. Legacy alignment is not ready for use."""
         if self.isBusy():
             return
-        num_processes = self.ui.proc_spin_box.value()
+        experiment = self.experimentFolder()
         channels = self.selectedChannels()
-        xy_channels = [channel + 'storm_' for channel in channels]
-        alignment_channel = 488 if self.ui.a_checkBox488.isChecked() else \
-                            561 if self.ui.a_checkBox561.isChecked() else None
-        experiment_folder = self.experimentFolder()
-
-        if not experiment_folder:
-            self.showError("Full Analysis", "Choose an experiment folder first.")
+        if not experiment or not channels:
+            self.showError("Batch Fit", "Choose an experiment folder first." if not experiment
+                           else "Tick at least one STORM channel.")
             return
-        if not channels:
-            self.showError("Full Analysis", "Tick at least one STORM channel.")
-            return
-        if alignment_channel is None:
-            self.showError("Full Analysis", "Tick an alignment channel (561 or 488).")
-            return
-
-        # Existing results. The old dialog offered to delete them but never did
-        # (the delete code was commented out). Nothing is deleted here either:
-        # fitting resumes existing results, the user can continue or cancel.
-        exp = os.path.normpath(experiment_folder)
-        acq = os.path.join(exp, "acquisition")
-        found = [p for p in (os.path.join(acq, "bead_registration"), os.path.join(acq, "bins"),
-                             os.path.join(acq, "real_bins"), os.path.join(exp, "stormtiffs"),
-                             os.path.join(exp, "analysis"), os.path.join(exp, "distcorr"))
-                 if os.path.isdir(p) and os.listdir(p)]
-        if found and not self.confirmExistingResults(found):
-            return
+        workers = self.ui.proc_spin_box.value()
 
         def fit(log, cancel):
-            return scmos_func.batch_fitting(experiment_folder, num_processes, channels,
-                                            log=log, cancel_event=cancel)
+            return scmos_func.batch_fitting(experiment, workers, channels, log=log, cancel_event=cancel)
 
-        def xy(log, cancel):
-            return xy_align_func.xy_align(experiment_folder, xy_channels, alignment_channel)
-
-        def z(log, cancel):
-            return z_align_func.z_align(experiment_folder, alignment_channel)
-
-        self.startJob("Full analysis", [("Batch fitting", fit), ("XY alignment", xy),
-                                        ("Z alignment", z)])
+        self.startJob("Batch fitting", [("Batch fitting", fit)])
 
     def updateDisplay(self, horizontalSlider, spinBox):
         spinBox.setValue(horizontalSlider.value())
 
     def handleLoadExpFolder(self):
+        if self.isBusy():
+            return
         exp_folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Choose Experiment Folder",
                                                                 self.directory)
         if exp_folder:
@@ -698,6 +669,8 @@ class Window(QtWidgets.QMainWindow):
         self.statusBar().showMessage("Experiment folder: " + folder, 10000)
 
     def open_input_parameters_dlg(self):
+        if self.isBusy():
+            return
         # Keep a reference on the window. As a local variable the dialog was
         # garbage collected as soon as this method returned, so it closed instantly.
         self.input_parameters_dlg = AdvancedSettingsDialog(self, xml_dir=self.experimentXmlDir())
@@ -708,25 +681,12 @@ class Window(QtWidgets.QMainWindow):
         return d if d and os.path.isdir(d) else None
 
     def open_frame_range_dlg(self):
+        if self.isBusy():
+            return
         # (The original called show() after exec(), so the dialog reopened after OK/Cancel.)
         self.frame_range_dlg = FrameRangeDialog(self, xml_dir=self.experimentXmlDir())
         self.frame_range_dlg.exec()
         
-    def confirmExistingResults(self, folders):
-        box = QtWidgets.QMessageBox(self)
-        box.setIcon(QtWidgets.QMessageBox.Icon.Information)
-        box.setWindowTitle("Existing results found")
-        box.setText("<b>Existing results found</b>")
-        box.setInformativeText("This experiment already has results in:\n\n" +
-                    "\n".join(" - " + f for f in folders) +
-                    "\n\nNothing will be deleted. Fitting picks up where it stopped "
-                    "and finished movies are kept.")
-        cont = box.addButton("Continue", QtWidgets.QMessageBox.ButtonRole.AcceptRole)
-        box.addButton(QtWidgets.QMessageBox.StandardButton.Cancel)
-        box.setDefaultButton(cont)
-        box.exec()
-        return box.clickedButton() is cont
-
     # ---- background jobs
     def isBusy(self):
         return self._worker_thread is not None
@@ -748,8 +708,12 @@ class Window(QtWidgets.QMainWindow):
 
     def setRunning(self, running, title=""):
         for w in (self.ui.fit_btn, self.ui.multifit_btn, self.ui.load_exp_btn,
-                  self.ui.test_params_btn, self.ui.frame_rg_btn):
+                  self.ui.test_params_btn, self.ui.frame_rg_btn,
+                  self.ui.actionLoad_Experiment_Folder, self.ui.actionLoad_Training_Parameters):
             w.setEnabled(not running)
+        editor = getattr(self, "input_parameters_dlg", None)
+        if editor is not None:
+            editor.setEnabled(not running)
         self.cancel_btn.setEnabled(running)
         if running:
             self.progress_bar.setRange(0, 0)          # busy until the first [i/n] line

@@ -132,63 +132,31 @@ def test_test_fit_without_folder_shows_message(win, app):
     close_message_boxes()
 
 
-def test_full_analysis_needs_alignment_channel(win, app, exp):
-    win.setExperimentFolder(exp)
-    win.ui.checkBox647.setChecked(True)
-    win.ui.a_checkBox488.setChecked(False)
-    win.ui.a_checkBox561.setChecked(False)
-    win.ui.multifit_btn.click()
-    app.processEvents()
-    assert not win.isBusy()
-    assert any("alignment channel" in box_text(m) for m in message_boxes())
-    close_message_boxes()
-
-
-def test_existing_results_prompt_never_deletes(win, app, exp, tmp_path):
-    """Old dialog said 'delete?' but deleted nothing. Now: Continue or Cancel."""
+def test_batch_fit_preserves_prior_outputs_and_does_not_run_alignment(win, app, exp, tmp_path):
     import shutil
-    d = tmp_path / "e"
+    d = tmp_path / "experiment"
     shutil.copytree(exp, d)
-    bins = d / "acquisition" / "bins"
-    bins.mkdir(exist_ok=True)
-    keep = bins / "647storm_00_mlist.hdf5"
-    keep.write_bytes(b"previous result")
+    old = d / "acquisition" / "bins" / "647storm_00_mlist.hdf5"
+    old.parent.mkdir(exist_ok=True)
+    old.write_bytes(b"previous result")
     win.setExperimentFolder(str(d))
     win.ui.checkBox647.setChecked(True)
-    win.ui.a_checkBox561.setChecked(True)
-
-    seen = {}
-
-    def press_cancel():
-        for m in message_boxes():
-            seen["text"] = box_text(m)
-            m.button(QtWidgets.QMessageBox.StandardButton.Cancel).click()
-    QtCore.QTimer.singleShot(200, press_cancel)
+    win.open_input_parameters_dlg()
+    editor = win.input_parameters_dlg
     win.ui.multifit_btn.click()
-    app.processEvents()
-    assert "Nothing will be deleted" in seen.get("text", "")
-    assert not win.isBusy()
-    assert keep.read_bytes() == b"previous result"
-
-
-def test_full_analysis_reports_the_failing_step(win, app, exp, tmp_path):
-    """Batch fitting works on simulated data; XY alignment needs real conventional
-    images and Fiji, so it must fail with a clear message, not a frozen or crashed app."""
-    import shutil
-    d = tmp_path / "f"
-    shutil.copytree(exp, d, ignore=shutil.ignore_patterns("bins", "real_bins", "stormtiffs"))
-    win.setExperimentFolder(str(d))
-    win.ui.checkBox647.setChecked(True)
-    win.ui.a_checkBox561.setChecked(True)
-    win.ui.multifit_btn.click()
+    assert win.isBusy()
+    assert not editor.isEnabled()
+    assert not win.ui.actionLoad_Experiment_Folder.isEnabled()
+    assert not win.ui.actionLoad_Training_Parameters.isEnabled()
+    win.open_input_parameters_dlg()
+    assert win.input_parameters_dlg is editor
     assert wait_until(app, lambda: not win.isBusy(), 180)
-    log = win.log_view.toPlainText()
-    assert "=== Batch fitting ===" in log and "Batch fitting done" in log
-    assert "=== XY alignment ===" in log
-    assert win.progress_bar.format() == "XY alignment failed"
-    assert any("XY alignment failed" in m.text() and "missing" in m.informativeText().lower()
-               for m in message_boxes())
-    close_message_boxes()
+    assert editor.isEnabled()
+    editor.close()
+    assert win.progress_bar.format() == "Batch fitting done", win.log_view.toPlainText()
+    assert "=== XY alignment ===" not in win.log_view.toPlainText()
+    assert len(list((d / "batch_fits").glob("run-*"))) == 1
+    assert old.read_bytes() == b"previous result"
 
 
 # ---------------------------------------------------------------- viewer

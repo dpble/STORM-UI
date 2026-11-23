@@ -124,5 +124,50 @@ def test_batch_fitting_each_movie_fitted_once(exp):
     assert r["bead_fits"] == 5                              # 1 bead movie x 5 bead XMLs
     assert len(r["bins"]) == 4 and all(os.path.exists(b) for b in r["bins"])
     assert len(r["tiffs"]) == 4 and all(os.path.exists(t) for t in r["tiffs"])
-    beads = os.path.join(exp, "acquisition", "bins", "Regbead_000_00_Vis647mlist.hdf5")
+    beads = os.path.join(r["output_dir"], "bins", "Regbead_000_00_Vis647mlist.hdf5")
     assert n_locs(beads) > 20
+
+
+def test_demo_generator_refuses_existing_experiment(tmp_path):
+    movie = tmp_path / "acquisition" / "647storm_00.dax"
+    xml = tmp_path / "XMLs" / "647.xml"
+    for path, data in [(movie, b"raw movie"), (xml, b"lab settings")]:
+        path.parent.mkdir()
+        path.write_bytes(data)
+    with pytest.raises(FileExistsError, match="new or empty"):
+        mte.make(tmp_path, small=True)
+    assert movie.read_bytes() == b"raw movie"
+    assert xml.read_bytes() == b"lab settings"
+    assert not (tmp_path / "ground_truth").exists()
+
+
+def test_batch_rerun_and_cancel_preserve_preexisting_results(tmp_path, monkeypatch):
+    from pathlib import Path
+    from analysis_scripts import scmos_batch_fitting as batch
+    mte.make(str(tmp_path), channels=("647", "750"), small=True)
+    first = batch_fitting(str(tmp_path), 2, ["647"], render=False, log=quiet([]))
+    previous = {Path(path): Path(path).read_bytes() for path in first["localizations"] + first["bins"]}
+    xml = tmp_path / "XMLs" / "647.xml"
+    t = xml.read_text()
+    xml.write_text(t.replace('>50</max_frame>', '>20</max_frame>'))
+    second = batch_fitting(str(tmp_path), 2, ["647"], render=False, log=quiet([]))
+    assert second["output_dir"] != first["output_dir"]
+    assert all("750storm" not in file for file in second["bins"] + second["localizations"])
+    with saH5Py.SAH5Reader(second["localizations"][0]) as reader:
+        frames = [frame for frame, _ in reader.localizationsIterator()]
+    assert max(frames) == 19
+    assert all(path.read_bytes() == contents for path, contents in previous.items())
+
+    run_jobs = batch.run_jobs
+    def cancel_conversion(cmds, workers, log, cancel_event, label):
+        if label == "conversion":
+            Path(cmds[0][-1]).write_bytes(b"incomplete conversion")
+            raise pu.Cancelled("conversion interrupted")
+        return run_jobs(cmds, workers, log, cancel_event, label=label)
+
+    monkeypatch.setattr(batch, "run_jobs", cancel_conversion)
+    with pytest.raises(pu.Cancelled):
+        batch_fitting(str(tmp_path), 2, ["647"], render=False, log=quiet([]))
+    assert sorted(x.name for x in (tmp_path / "batch_fits").iterdir()) == sorted(
+        [Path(first["output_dir"]).name, Path(second["output_dir"]).name])
+    assert all(path.read_bytes() == contents for path, contents in previous.items())

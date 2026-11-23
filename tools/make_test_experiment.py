@@ -85,12 +85,15 @@ def calib_for(xml_dir, channel):
 
 
 def make(out, channels=("647",), sections=1, small=False, n_roi=60, n_frames=N_FRAMES, seed=1, beads=0):
+    os.makedirs(out, exist_ok=True)
+    if os.listdir(out):
+        raise FileExistsError(f"Choose a new or empty demo directory: {out}")
     size = 256 if small else 896
     xml_dir = os.path.join(out, "XMLs")
     acq = os.path.join(out, "acquisition")
     truth_dir = os.path.join(out, "ground_truth")
     for d in (acq, truth_dir):
-        os.makedirs(d, exist_ok=True)
+        os.makedirs(d)
     copy_xmls(xml_dir, small, size)
 
     made = []

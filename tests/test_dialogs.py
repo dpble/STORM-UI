@@ -137,7 +137,7 @@ def test_frame_range_missing_channel_does_not_stop_halfway(app, exp):
     d.ui.sf_spinBox_750.setValue(3)
     written, missing = d.send_params()
     assert missing == ["561"]
-    assert "750" in written and "488" in written            # channels after 561 still saved
+    assert written == ["750"]  # only changed XML is saved
     assert xml_value(os.path.join(exp, "XMLs", "750.xml"), "start_frame") == "3"
 
 
@@ -149,3 +149,32 @@ def test_dialogs_without_experiment_fall_back_quietly(app):
     app.processEvents()
     assert not visible(QtWidgets.QErrorMessage)
     a.close(); f.close()
+
+
+def test_edit_preserves_unedited_xml_and_precision(win, app, exp):
+    from pathlib import Path
+    xmls = Path(exp) / "XMLs"
+    other = xmls / "750.xml"
+    old = other.read_bytes()
+    xml = xmls / "647.xml"
+    xml.write_bytes(xml.read_bytes().replace(b'>14.0</threshold>', b'>14.1234567</threshold>'))
+    assert xml_value(str(xml), "threshold") == "14.1234567"
+    win.open_input_parameters_dlg()
+    d = win.input_parameters_dlg
+    d.ui.ef647.setValue(20)
+    d.updateXML()
+    assert xml_value(str(xml), "threshold") == "14.1234567"
+    assert xml_value(str(xml), "max_frame") == "20"
+    assert other.read_bytes() == old
+
+
+def test_invalid_later_xml_leaves_all_originals_untouched(tmp_path):
+    from gui.xml_settings import save_edits
+    a, b = tmp_path / "a.xml", tmp_path / "b.xml"
+    a.write_bytes(b"<settings><start_frame>0</start_frame><max_frame>50</max_frame></settings>")
+    b.write_bytes(a.read_bytes())
+    old = a.read_bytes()
+    with pytest.raises(ValueError):
+        save_edits([(a, {"start_frame": "5"}), (b, {"start_frame": "60"})])
+    assert a.read_bytes() == b.read_bytes() == old
+    assert len(list(tmp_path.iterdir())) == 2

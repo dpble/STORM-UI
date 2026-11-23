@@ -19,17 +19,17 @@ QUICK_START = """
 <li><b>Experiment folder</b>: choose the folder that contains <code>acquisition/</code>
 (the .dax movies, named like <code>647storm_00.dax</code>) and <code>XMLs/</code>
 (one fitting parameter file per channel, like <code>647.xml</code>).</li>
-<li><b>Channels</b>: tick the STORM channels to fit and the channel used for alignment.
+<li><b>Channels</b>: tick the STORM channels to fit.
 <i>Parallel jobs</i> is how many movies are fitted at the same time.</li>
 <li><b>Test fit</b>: <i>Edit Test Parameters</i> to change the XML settings, pick a
 movie number, then <i>Run Test Fit</i>. Only that movie is fitted, using the frame
 range in the XML. The movie and its localizations open in the viewer when it is done,
 so you can check the parameters before the full run.</li>
-<li><b>Full analysis</b>: <i>Set Frame Ranges</i>, then <i>Run Full Analysis</i>:
-fitting of every movie and bead movie, then XY and Z alignment (these need Fiji).</li>
+<li><b>Batch fitting</b>: <i>Set Frame Ranges</i>, then <i>Run Batch Fit</i>.
+Results go into a new folder under <code>batch_fits/</code>. XY and Z alignment are not available in this build.</li>
 </ol>
 <p>Jobs run in the background. Progress and messages appear in the log under the
-viewer, and <i>Cancel</i> stops them. Existing results are never deleted.</p>
+viewer, and <i>Cancel</i> stops them. Run fitting only with trusted settings and calibration files.</p>
 """
 
 SHORTCUTS = """
@@ -62,7 +62,7 @@ TOOLTIPS = {
     "fit_frame_select": "Movie number to test, e.g. 3 for 647storm_03.dax. -1 tests every movie.",
     "fit_btn": "Fit one movie per selected channel with the current XML parameters and show the result.",
     "frame_rg_btn": "Set the frame ranges used for the full analysis.",
-    "multifit_btn": "Fit every movie and bead movie, then run XY and Z alignment.",
+    "multifit_btn": "Fit selected STORM channels and bead movies into a new results folder.",
     "load_mov_btn": "Open a movie (.dax, .tif, .spe, .fits). You can also drop it on the viewer.",
     "load_loc1_btn": "Overlay localizations (.hdf5 or .bin), drawn in the first color.",
     "load_loc2_btn": "Overlay a second localization file, drawn in the second color.",
@@ -109,7 +109,7 @@ def apply_layout(win):
     ui.test_params_btn.setText("Edit Test Parameters…")
     ui.fit_btn.setText("Run Test Fit")
     ui.frame_rg_btn.setText("Set Frame Ranges…")
-    ui.multifit_btn.setText("Run Full Analysis")
+    ui.multifit_btn.setText("Run Batch Fit")
     ui.load_mov_btn.setText("Open Movie…")
     ui.load_loc1_btn.setText("Overlay Localizations 1…")
     ui.load_loc2_btn.setText("Overlay Localizations 2…")
@@ -150,16 +150,17 @@ def apply_layout(win):
     lv = QtWidgets.QVBoxLayout(left)
     lv.setContentsMargins(8, 8, 8, 8)
     lv.setSpacing(10)
-    lv.addWidget(_group("1. Experiment", ui.load_exp_btn, ui.exp_lbl, win.exp_hint))
+    trust_hint = QtWidgets.QLabel("Only fit experiments with trusted XML and calibration files.")
+    trust_hint.setWordWrap(True)
+    lv.addWidget(_group("1. Experiment", ui.load_exp_btn, ui.exp_lbl, win.exp_hint, trust_hint))
     lv.addWidget(_group("2. Channels",
                         _row("STORM", ui.checkBox750, ui.checkBox647, ui.checkBox561, ui.checkBox488),
-                        _row("Alignment", ui.a_checkBox561, ui.a_checkBox488),
                         _row(ui.proc_lbl, ui.proc_spin_box)))
     lv.addWidget(_group("3. Test fit (one movie)",
                         ui.test_params_btn,
                         _row(ui.fit_frame_lbl, ui.fit_frame_select),
                         ui.fit_btn))
-    lv.addWidget(_group("4. Full analysis", ui.frame_rg_btn, ui.multifit_btn))
+    lv.addWidget(_group("4. Batch fitting", ui.frame_rg_btn, ui.multifit_btn))
     lv.addWidget(_group("Viewer", ui.load_mov_btn, ui.load_loc1_btn, ui.load_loc2_btn,
                         _row(win.auto_contrast_btn, win.reset_zoom_btn, stretch=False),
                         win.help_btn))
@@ -177,7 +178,7 @@ def apply_layout(win):
     win.log_view = QtWidgets.QPlainTextEdit()
     win.log_view.setReadOnly(True)
     win.log_view.setMaximumBlockCount(20000)
-    win.log_view.setPlaceholderText("Messages from Test Fit and Full Analysis appear here.")
+    win.log_view.setPlaceholderText("Messages from Test Fit and Batch Fit appear here.")
     win.log_view.setFont(QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.SystemFont.FixedFont))
     win.progress_bar = QtWidgets.QProgressBar()
     win.progress_bar.setTextVisible(True)

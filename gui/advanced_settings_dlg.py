@@ -9,7 +9,8 @@ import sys
 from functools import partial
 
 import xml.etree.ElementTree as ET
-import lxml.etree as lxmlET
+from lxml import etree
+from .xml_settings import read_settings, save_edits
 import yaml 
 
 # configs/XMLs.yml, found relative to this repo (was hardcoded to one lab PC)
@@ -32,6 +33,7 @@ class AdvancedSettingsDialog(QDialog):
         Without it, falls back to the paths in configs/XMLs.yml (original behavior)."""
         super(AdvancedSettingsDialog, self).__init__(*args, **kwargs)
         self.xml_dir = xml_dir
+        self.loaded = {}
 
         self.ui = Ui_Dialog()
         self.ui.setupUi(self)
@@ -87,93 +89,58 @@ class AdvancedSettingsDialog(QDialog):
 
         if fileName:
             print(fileName)
-            label.setText(fileName)
-            
-            # Load in the XML tree 
-            if os.path.exists(fileName):
-                tree = lxmlET.parse(fileName)
-                root = tree.getroot()
-            else:
-                self.error_dialog = QErrorMessage()
-                self.error_dialog.setWindowTitle('Error')
-                self.error_dialog.showMessage('Please enter valid file path!')
+            try:
+                root = read_settings(fileName).getroot()
+                fields = self.fields(channel)
+                values = {}
+                for name, widget in fields.items():
+                    text = root.findtext(name)
+                    if text is None:
+                        continue
+                    values[name] = (bool(int(text)) if name == "drift_correction"
+                                    else int(text) if name in ("start_frame", "max_frame")
+                                    else float(text))
+            except (OSError, ValueError, etree.XMLSyntaxError) as exc:
+                QMessageBox.warning(self, "Could not read settings", str(exc))
                 return
+            label.setText(fileName)
+            for name, widget in fields.items():
+                widget.setEnabled(name in values)
+                if name not in values:
+                    continue
+                if name == "drift_correction":
+                    widget.setChecked(values[name])
+                else:
+                    widget.setValue(values[name])
+            self.loaded[channel] = (fileName, self.field_values(channel))
 
-            sf = self.sfs[channel]
-            ef = self.efs[channel]
-            bs = self.bss[channel]
-            fs = self.fss[channel]
-            psf = self.psfs[channel] 
-            cb = self.checkBoxes[channel]
-            
-            for child in root:
-                # Frame boxes are integer spin boxes: PyQt6 rejects floats (crash).
-                if child.tag == "start_frame":
-                    sf.setValue(int(float(child.text)))
-                if child.tag == "max_frame":
-                    ef.setValue(int(float(child.text)))
-                if child.tag == "background_sigma":
-                    bs.setValue(float(child.text))
-                if child.tag == "foreground_sigma":
-                    fs.setValue(float(child.text))
-                if child.tag == "threshold":
-                    thresh.setValue(float(child.text))
-                if child.tag == "sigma":
-                    psf.setValue(float(child.text))
-                if child.tag == "drift_correction":
-                    cb.setChecked(child.text.strip() == "1")
+    def fields(self, i):
+        return dict(start_frame=self.sfs[i], max_frame=self.efs[i],
+                    background_sigma=self.bss[i], foreground_sigma=self.fss[i],
+                    threshold=self.threshs[i], sigma=self.psfs[i], drift_correction=self.checkBoxes[i])
+
+    def field_values(self, i):
+        return {name: (str(int(widget.isChecked())) if name == "drift_correction" else str(widget.value()))
+                for name, widget in self.fields(i).items() if widget.isEnabled()}
 
     def updateXML(self):
-
-        tree = None
-        gui_objs = zip(self.labels, self.threshs, self.sfs, self.efs, self.bss, self.fss, self.psfs, self.checkBoxes)
-
-        counter = 0
-
-        for (label, thresh, sf, ef, bs, fs, psf, cb) in gui_objs:
-            file_path = label.text()
-            print(file_path)
-            if not file_path.endswith('xml'):
-                pass
-            else:
-                # Load in the XML file
-                if os.path.exists(file_path):
-                    counter += 1
-                    tree = lxmlET.parse(file_path)
-                    root = tree.getroot()
-                else:
-                    self.error_dialog = QErrorMessage()
-                    self.error_dialog.setWindowTitle('Error')
-                    self.error_dialog.showMessage('Please enter valid file path!')
-                    return
-
-                # Second need to find necessary variables of interest that will be edited for each XML file
-                for child in root:
-                    if child.tag == "start_frame":
-                        child.text = str(sf.value())
-                    if child.tag == "max_frame":
-                        child.text = str(ef.value())
-                    if child.tag == "background_sigma":
-                        child.text = str(bs.value())
-                    if child.tag == "foreground_sigma":
-                        child.text = str(fs.value())
-                    if child.tag == "threshold":
-                        child.text = str(thresh.value())
-                    if child.tag == "sigma":
-                        child.text = str(psf.value())
-                    if child.tag == "drift_correction":
-                        if cb.isChecked():
-                            child.text = str(1)
-                        else:
-                            child.text = str(0)
-                if tree:
-                    tree.write(file_path)
-
-        msg = QMessageBox()
-        msg.setWindowTitle("Success")
-        msg.setText('{} XMLs were updated!'.format(counter))
+        if not self.isEnabled():
+            return
+        edits = []
+        for channel, (path, initial) in self.loaded.items():
+            changes = {key: value for key, value in self.field_values(channel).items()
+                       if value != initial.get(key)}
+            if changes:
+                edits.append((path, changes))
+        try:
+            save_edits(edits)
+        except (OSError, ValueError, etree.XMLSyntaxError) as exc:
+            QMessageBox.warning(self, "Could not save settings", str(exc))
+            return
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Settings")
+        msg.setText(f"{len(edits)} XML file(s) updated.")
         msg.exec()
-        
         self.close()
 
 if __name__ == '__main__':

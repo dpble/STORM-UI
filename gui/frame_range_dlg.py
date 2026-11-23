@@ -9,7 +9,8 @@ import sys
 from functools import partial
 
 import xml.etree.ElementTree as ET
-import lxml.etree as lxmlET
+from lxml import etree
+from .xml_settings import read_settings, save_edits
 import yaml 
 
 # configs/XMLs.yml, found relative to this repo (was hardcoded to one lab PC)
@@ -23,6 +24,7 @@ class FrameRangeDialog(QDialog):
     def __init__(self, *args, xml_dir=None, **kwargs):
         super(FrameRangeDialog, self).__init__(*args, **kwargs)
         self.xml_dir = xml_dir
+        self.initial = {}
 
         self.ui = Ui_Dialog()
         self.ui.setupUi(self)
@@ -42,12 +44,13 @@ class FrameRangeDialog(QDialog):
         for sf, ef, channel in zip(self.sfs, self.efs, [488, 561, 647, 750]):
             path = self.xmlPath(channel)
             if os.path.exists(path):
-                root = lxmlET.parse(path).getroot()
+                root = read_settings(path).getroot()
                 for child in root:
                     if child.tag == "start_frame":
                         sf.setValue(int(float(child.text)))
                     if child.tag == "max_frame":
                         ef.setValue(int(float(child.text)))
+                self.initial[channel] = (sf.value(), ef.value())
             else:
                 sf.setEnabled(False); ef.setEnabled(False)
                 sf.setToolTip(f"Not found: {path}"); ef.setToolTip(f"Not found: {path}")
@@ -62,22 +65,22 @@ class FrameRangeDialog(QDialog):
 
   
     def send_params(self):
-        # Write every channel whose XML exists. The original returned at the first
-        # missing file, after already writing the earlier channels.
-        written, missing = [], []
+        edits, written, missing = [], [], []
         for sf, ef, channel in zip(self.sfs, self.efs, [488, 561, 647, 750]):
-            file_path = self.xmlPath(channel)
-            if not os.path.exists(file_path):
+            if channel not in self.initial:
                 missing.append(str(channel))
                 continue
-            tree = lxmlET.parse(file_path)
-            for child in tree.getroot():
-                if child.tag == "start_frame":
-                    child.text = str(sf.value())
-                if child.tag == "max_frame":
-                    child.text = str(ef.value())
-            tree.write(file_path)
-            written.append(str(channel))
+            changes = {key: str(value) for key, value, initial in
+                       zip(("start_frame", "max_frame"), (sf.value(), ef.value()), self.initial[channel])
+                       if value != initial}
+            if changes:
+                edits.append((self.xmlPath(channel), changes))
+                written.append(str(channel))
+        try:
+            save_edits(edits)
+        except (OSError, ValueError, etree.XMLSyntaxError) as exc:
+            QMessageBox.warning(self, "Could not save frame ranges", str(exc))
+            return [], missing
         msg = QMessageBox(self)
         msg.setWindowTitle("Frame ranges")
         text = "Frame ranges saved for " + (", ".join(written) or "no channels") + "."

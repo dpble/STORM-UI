@@ -1,0 +1,38 @@
+"""Stage XML edits beside their originals; leave unedited files untouched."""
+import os
+from pathlib import Path
+import shutil
+import tempfile
+
+from lxml import etree
+
+
+def read_settings(path):
+    return etree.parse(str(path), etree.XMLParser(resolve_entities=False, no_network=True))
+
+
+def save_edits(edits):
+    staged = []
+    try:
+        for filename, changes in edits:
+            path = Path(filename).resolve(strict=True)
+            tree = read_settings(path)
+            for key, text in changes.items():
+                node = tree.find(key)
+                if node is None:
+                    raise ValueError(f"{path.name} has no {key} setting")
+                node.text = text
+            if changes.keys() & {"start_frame", "max_frame"}:
+                start = int(tree.findtext("start_frame", "0"))
+                end = int(tree.findtext("max_frame", "0"))
+                if start < 0 or (end > 0 and end <= start):
+                    raise ValueError(f"{path.name}: end frame must be after start frame, or 0 for the full movie.")
+            with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".settings-", delete=False) as temp:
+                staged.append((temp.name, path))
+                tree.write(temp, encoding=tree.docinfo.encoding or "UTF-8", xml_declaration=True)
+            shutil.copymode(path, temp.name)
+        for temp, path in staged:
+            os.replace(temp, path)
+    finally:
+        for temp, _ in staged:
+            Path(temp).unlink(missing_ok=True)

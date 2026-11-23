@@ -7,6 +7,9 @@ Shared helpers for the analysis pipeline.
   exit codes (a crashed fit still looked like success) and cannot be cancelled.
 """
 import os
+from pathlib import Path
+import shutil
+from lxml import etree
 import subprocess
 import sys
 import threading
@@ -28,6 +31,38 @@ class PipelineError(Exception):
 
 class Cancelled(PipelineError):
     pass
+
+
+class FitSettingsSnapshot:
+    """Capture the XML and its referenced input files before starting fit jobs."""
+
+    def __init__(self, directory):
+        self.directory = Path(directory)
+        self.directory.mkdir()
+        self.xmls = {}
+        self.inputs = {}
+
+    def copy(self, filename):
+        source = Path(filename).resolve()
+        if source in self.xmls:
+            return self.xmls[source]
+        try:
+            tree = etree.parse(str(source), etree.XMLParser(resolve_entities=False, no_network=True))
+        except (OSError, etree.XMLSyntaxError) as exc:
+            raise PipelineError(f"Reading fit settings failed: {source}: {exc}") from exc
+        for node in tree.getroot():
+            if node.get("type") != "filename" or not (node.text or "").strip():
+                continue
+            original = (source.parent / node.text.strip()).resolve()
+            if original not in self.inputs:
+                dest = self.directory / f"input-{len(self.inputs)}-{original.name}"
+                shutil.copyfile(original, dest)
+                self.inputs[original] = dest
+            node.text = self.inputs[original].name
+        result = self.directory / f"settings-{len(self.xmls)}-{source.name}"
+        tree.write(str(result), encoding="UTF-8", xml_declaration=True)
+        self.xmls[source] = str(result)
+        return str(result)
 
 
 def fit_cmd(movie, mlist, xml):

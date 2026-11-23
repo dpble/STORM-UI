@@ -181,3 +181,11 @@ if available. Use a disposable working copy for validation.
 ## Standard launch
 
 Run `python main.py` with the virtual environment active. The app and tests no longer need custom `PYTHONPATH` entries for the lab scripts or storm-analysis. The startup test opens the main window from an unrelated working directory in a fresh process.
+
+## Review safeguards
+
+- The demo generator refuses a nonempty destination before writing any files.
+- Batch Fit snapshots XML and referenced inputs and writes only results from the selected run. It publishes a new result directory after fitting, conversion, and rendering finish. Cancellation or failure before publication does not touch earlier runs.
+- The settings dialogs only save fields that changed. They stage edits before replacing XML files and disable the settings entry points during fitting.
+- Batch Fit replaces Full Analysis in the GUI. Legacy alignment scripts remain unverified and are not called by the application. Verify both alignment channels and update the Fiji launcher and wait handling before re-enabling alignment.
+- Fit only with trusted XML and calibration files; the inherited calibration loader is not a sandbox.

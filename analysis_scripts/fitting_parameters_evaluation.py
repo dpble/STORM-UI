@@ -24,10 +24,10 @@ import tempfile
 import storm_analysis.sa_library.datareader as datareader
 
 try:
-    from analysis_scripts.pipeline_utils import (HDF5_TO_BIN, PYTHON, PipelineError,
+    from analysis_scripts.pipeline_utils import (Cancelled, FitSettingsSnapshot, HDF5_TO_BIN, PYTHON, PipelineError,
                                                  fit_cmd, run_jobs)
 except ImportError:
-    from pipeline_utils import (HDF5_TO_BIN, PYTHON, PipelineError,
+    from pipeline_utils import (Cancelled, FitSettingsSnapshot, HDF5_TO_BIN, PYTHON, PipelineError,
                                 fit_cmd, run_jobs)
 
 MINIMUM_LENGTH = 100   # frames; shorter movies are skipped (unchanged from original)
@@ -84,11 +84,15 @@ def fitting_params(expfolder, max_processes, selected_channels, movie_idx,
     # the previous results intact.
     with tempfile.TemporaryDirectory(prefix=".staging-", dir=bin_folder) as staging:
         staged = [os.path.join(staging, os.path.basename(o)) for o in outputs]
+        snapshots = FitSettingsSnapshot(os.path.join(staging, "settings"))
         for cmd, path in zip(cmd_lines, staged):
+            cmd[-1] = snapshots.copy(cmd[-1])
             cmd[cmd.index("--bin") + 1] = path
         run_jobs(cmd_lines, max_processes, log, cancel_event, label="fit")
         conv = [[PYTHON, HDF5_TO_BIN, "--hdf5", h5, "--bin", h5[:-5] + ".bin"] for h5 in staged]
         run_jobs(conv, max_processes, log, cancel_event, label="conversion")
+        if cancel_event is not None and cancel_event.is_set():
+            raise Cancelled("Cancelled before publishing test fit")
         for src, dst in zip(staged, outputs):
             os.replace(src, dst)
             os.replace(src[:-5] + ".bin", dst[:-5] + ".bin")
