@@ -36,7 +36,9 @@ from gui.input_parameters_dlg import InputParametersDialog
 from gui.frame_range_dlg import FrameRangeDialog
 from gui.advanced_settings_dlg import AdvancedSettingsDialog
 
-from gui import qtRangeSlider 
+from gui import qtRangeSlider
+from gui.layout import apply_layout, show_help
+from gui.pipeline_worker import start_worker 
 
 # Pipeline Imports 
 from analysis_scripts import fitting_parameters_evaluation as fitting_func 
@@ -266,6 +268,7 @@ class MovieView(QtWidgets.QGraphicsView):
     leftMouseButtonReleased = pyqtSignal(float, float)
     dragged = QtCore.pyqtSignal(str)
     dropped = QtCore.pyqtSignal(str)
+    region_selected = QtCore.pyqtSignal(QtCore.QRectF)   # Shift+drag box, scene coords
 
 
     def __init__(self, xyi_label = None, **kwds):
@@ -298,9 +301,16 @@ class MovieView(QtWidgets.QGraphicsView):
         self.setMouseTracking(True)
         self.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing | QtGui.QPainter.RenderHint.SmoothPixmapTransform)
         self.scale(2.0, 2.0)
+
+        # Shift+drag draws a box: zoom to it and set contrast from it.
+        self._rubber_rect = None
+        self._box_mode = False
+        self.rubberBandChanged.connect(self._onRubberBand)
         
         # Tooltip.
-        self.setToolTip("Advance frame +- 1 <,><.>\nAdvance frame +-200<k><l>\n<Home>first frame\n<End>last frame")
+        self.setToolTip("Frames: . and ,  (L / K: 200)  Home / End\n"
+                        "Wheel: zoom   Drag: pan   Shift+drag: zoom to box + contrast\n"
+                        "A: auto contrast   R: reset zoom")
        
         # Drag and Drop Functionality 
         self.setAcceptDrops(True)
@@ -349,25 +359,49 @@ class MovieView(QtWidgets.QGraphicsView):
             if ((x>=0) and (x<sx) and (y>=0) and (y<sy)):
                 i = int(self.data[int(y), int(x)])
         self.xyi_label.setText("{0:.2f}, {1:.2f}, {2:d}".format(x - 0.5, y - 0.5, i))
+        # Pass the event on. Without this, Qt never saw the drag, so panning with
+        # the mouse (ScrollHandDrag) did nothing, and neither could a selection box.
+        QGraphicsView.mouseMoveEvent(self, event)
 
     def mousePressEvent(self, event):
         if (event.button() == QtCore.Qt.MouseButton.LeftButton):
-            self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+            if event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier:
+                self._box_mode = True
+                self._rubber_rect = None
+                self.setDragMode(QGraphicsView.DragMode.RubberBandDrag)
+            else:
+                self._box_mode = False
+                self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
             scenePos = self.mapToScene(event.pos())
             self.mouse_press.emit(scenePos.x(), scenePos.y())
             self.leftMouseButtonPressed.emit(scenePos.x(), scenePos.y())
         QGraphicsView.mousePressEvent(self, event)
-            
-    def mouseReleaseEvent(self, event): 
-    
-        """ Stop mouse pan or zoom mode (apply zoom if valid).
+
+    def mouseReleaseEvent(self, event):
+        """ Stop mouse pan, or finish a Shift+drag box (zoom to it).
         """
         QGraphicsView.mouseReleaseEvent(self, event)
         scenePos = self.mapToScene(event.pos())
         if event.button() == Qt.MouseButton.LeftButton:
+            if self._box_mode and self._rubber_rect is not None \
+                    and self._rubber_rect.width() > 2 and self._rubber_rect.height() > 2:
+                rect = self._rubber_rect
+                self.fitInView(rect, QtCore.Qt.AspectRatioMode.KeepAspectRatio)
+                self.region_selected.emit(rect)
+            self._box_mode = False
+            self._rubber_rect = None
             self.setDragMode(QGraphicsView.DragMode.NoDrag)
             self.leftMouseButtonReleased.emit(scenePos.x(), scenePos.y())
-        
+
+    def _onRubberBand(self, view_rect, from_scene, to_scene):
+        # Qt sends an empty rect when the drag ends, so remember the last real one.
+        if not view_rect.isNull():
+            self._rubber_rect = QtCore.QRectF(from_scene, to_scene).normalized()
+
+    def resetZoom(self):
+        if isinstance(self.data, np.ndarray):
+            h, w = self.data.shape
+            self.fitInView(QtCore.QRectF(0, 0, w, h), QtCore.Qt.AspectRatioMode.KeepAspectRatio)
 
     def newFrame(self, frame, locs1, locs2, fmin, fmax):
         self.scene.clear()
@@ -439,7 +473,8 @@ class Window(QtWidgets.QMainWindow):
         self.locs1_list = None
         self.locs2_list = None
         self.movie_file = None
-        self.settings = QtCore.QSettings("Speer Lab", "Image Analysis")
+        self.settings = QtCore.QSettings(QtCore.QSettings.defaultFormat(), QtCore.QSettings.Scope.UserScope,
+                                         "Speer Lab", "Image Analysis")  # default format so tests can redirect it
 
         self.locs_display_timer = QtCore.QTimer(self)
         self.locs_display_timer.setInterval(100)
@@ -527,172 +562,136 @@ class Window(QtWidgets.QMainWindow):
         # Button functionality for STORM analysis 
         self.ui.fit_btn.clicked.connect(self.runFitting) 
         self.ui.multifit_btn.clicked.connect(self.runAnalysis) 
+
+        # New layout, help, log panel, viewer extras (gui/layout.py)
+        apply_layout(self)
+        self._worker = None
+        self._worker_thread = None
+        self.auto_contrast_btn.clicked.connect(lambda: self.autoContrast())
+        self.reset_zoom_btn.clicked.connect(lambda: self.movie_view.resetZoom())
+        self.cancel_btn.clicked.connect(self.cancelJob)
+        self.movie_view.region_selected.connect(self.autoContrast)
+        self.ui.actionCapture.setText("Save View as PNG…")
                
 
     """ This method handles running the fitting parameters evaluation pipeline """
+    def selectedChannels(self):
+        return [cb.text() for cb in (self.ui.checkBox488, self.ui.checkBox561,
+                                     self.ui.checkBox647, self.ui.checkBox750) if cb.isChecked()]
+
+    def experimentFolder(self):
+        return self.ui.exp_lbl.text().strip()
+
+    def showError(self, title, message):
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Icon.Warning)
+        box.setWindowTitle(title)
+        # macOS does not show message box titles, so the heading goes in the text.
+        box.setText(f"<b>{title}</b>")
+        box.setInformativeText(message)
+        self._msg = box
+        box.show()
+        return box
+
     def runFitting(self):
- 
-        # Get number of processes 
-        num_processes = self.ui.proc_spin_box.value() 
-        # Get all of the selected channels 
-        channels = [] 
-        for cb in [self.ui.checkBox488, self.ui.checkBox561, self.ui.checkBox647, self.ui.checkBox750]:
-            if cb.isChecked(): 
-                channels.append(cb.text())
-        
-        experiment_folder = self.ui.exp_lbl.text()
-        movie_idx = self.ui.fit_frame_select.value() 
-        
-        # Handle errors 
-        if not experiment_folder or len(channels) == 0: 
-            error_dialog = QtWidgets.QErrorMessage()
-            error_dialog.setWindowTitle("Error!") 
-            message = 'Please enter an experiment folder!' if not experiment_folder else 'Please select fitting channels!'
-            error_dialog.showMessage(message) 
-            error_dialog.exec()
-            return 
-            
-        # Pass the parameters to the fitting function
-        try:         
-            print("Process executing...")
-            fitting_func.fitting_params(experiment_folder, num_processes, channels, movie_idx)
-        except Exception as e: 
-            error_dialog = QtWidgets.QErrorMessage()
-            error_dialog.setWindowTitle("Error!") 
-            error_dialog.showMessage("Fitting has failed: " + str(e)) 
-            error_dialog.exec() 
-            return 
-        
-        print('2')
-        # If this is done running then just have a success box!
-        msg = QtWidgets.QMessageBox()
-        msg.setWindowTitle("Success")
-        msg.setText('Process executed successfully!')
-        msg.exec()
+        """Test fit: fit one movie per selected channel in the background, then
+        open the movie and its localizations in the viewer."""
+        if self.isBusy():
+            return
+        channels = self.selectedChannels()
+        experiment_folder = self.experimentFolder()
+        movie_idx = self.ui.fit_frame_select.value()
+        if not experiment_folder or not channels:
+            self.showError("Test Fit", "Choose an experiment folder first." if not experiment_folder
+                           else "Tick at least one STORM channel.")
+            return
+        n = self.ui.proc_spin_box.value()
+
+        def fit(log, cancel):
+            return fitting_func.fitting_params(experiment_folder, n, channels, movie_idx,
+                                               log=log, cancel_event=cancel)
+        self.startJob("Test fit", [("Test fit", fit)], on_success=self._showTestFitResult)
+
+    def _showTestFitResult(self, results):
+        outputs = results.get("Test fit") or []
+        if not outputs:
+            return
+        h5 = outputs[0]
+        movie = os.path.join(os.path.dirname(os.path.dirname(h5)),
+                             os.path.basename(h5).replace("_mlist.hdf5", ".dax"))
+        if os.path.exists(movie):
+            self.loadMovieFile(movie)
+            self.loadLocalizations(h5, 1)
+        self.statusBar().showMessage(f"Test fit done: {len(outputs)} movie(s). Showing "
+                                     f"{os.path.basename(h5)}.", 15000)
 
     def runAnalysis(self):
-        # Get number of processes 
-        num_processes = self.ui.proc_spin_box.value() 
-        
-        # Get all of the selected channels 
-        channels = [] 
-        for cb in [self.ui.checkBox488, self.ui.checkBox561, self.ui.checkBox647, self.ui.checkBox750]:
-            if cb.isChecked(): 
-                channels.append(cb.text())
+        """Full analysis in the background: batch fitting, then XY and Z alignment."""
+        if self.isBusy():
+            return
+        num_processes = self.ui.proc_spin_box.value()
+        channels = self.selectedChannels()
         xy_channels = [channel + 'storm_' for channel in channels]
+        alignment_channel = 488 if self.ui.a_checkBox488.isChecked() else \
+                            561 if self.ui.a_checkBox561.isChecked() else None
+        experiment_folder = self.experimentFolder()
 
-        alignment_channels = [] 
-        for a_cb in [self.ui.a_checkBox488, self.ui.a_checkBox561]:
-            if a_cb.isChecked(): 
-                alignment_channels.append(a_cb.text())
-      
-        experiment_folder = self.ui.exp_lbl.text()
-        
-        # Handle errors 
-        if not experiment_folder or len(channels) == 0 or len(alignment_channels) == 0: 
-            error_dialog = QtWidgets.QErrorMessage()
-            error_dialog.setWindowTitle("Error!") 
-            
-            message = "" 
-            if not experiment_folder:
-                message += "Please enter an experiment folder! \n" 
-            elif len(channels) == 0:
-                message += "Please select fitting channels! \n" 
-            elif len(alignment_channels) == 0:
-                message += "Please select alignment channels! \n" 
-            error_dialog.showMessage(message) 
-            error_dialog.exec()
-            return 
-            
-            
-        # Check for and remove artifacts 
-        f1 = os.path.normpath(experiment_folder) + "\\acquisition\\bead_registration\\"
-        f2 = os.path.normpath(experiment_folder) + "\\acquisition\\bins\\"
-        f3 = os.path.normpath(experiment_folder) + "\\acquisition\\real_bins\\"
-        f4 = os.path.normpath(experiment_folder) + "\\stormtiffs\\"
-        
-        f5 = os.path.normpath(experiment_folder) + "\\analysis\\"
-        f6 = os.path.normpath(experiment_folder) + "\\distcorr\\"
-        f7 = os.path.normpath(experiment_folder) + "\\acquisition\\*.tif"
-                
-        f = [f1, f2, f3, f4, f5, f6]
-   
-        f = [os.path.normpath(folder) for folder in f]
-        bf = [os.path.exists(folder) for folder in f]
-        
-        bf.append(len(glob.glob(f7)) > 0)
-        
-        print(f) 
-        print(bf)
-        
-        if any(bf):
-            text = "Warning: Existing files found! Do you want to delete?"
-            for i, folder in enumerate(f): 
-                if bf[i]: 
-                    text += f"\n - {folder}"  
-            out = self.showOverrideDialog(text)
-            
-            if out == 0: # Delete files before rerunning 
-                pass 
-                # for folder in f:
-                    # if folder not in f: # FOR NOW TO TEST THE REST OF BATCH FITTING 
-                        # print("removing: ", f)
-                        # shutil.rmtree(folder, ignore_errors=True)
-                # if bf[-1]: 
-                    # for file in glob.glob(f7): 
-                        # print("removing: ", file)
-                        # os.remove(file) 
-            if out == 1: # Do nothing and continue 
-                pass 
-            if out == 2 or out == -1: # Cancel or Weird Thing! 
-                return 
-        
-        # Pass the parameters to the fitting function
-        try:                    
-            scmos_func.batch_fitting(experiment_folder, num_processes, channels)    
-        except Exception as e: 
-            error_dialog = QtWidgets.QErrorMessage()
-            error_dialog.setWindowTitle("Error!") 
-            error_dialog.showMessage("SCMOS Failed: " + str(e)) 
-            error_dialog.exec() 
-            return 
-        
-        alignment_channel = None 
-        if self.ui.a_checkBox488.isChecked(): 
-            alignment_channel = 488 
-        elif self.ui.a_checkBox561.isChecked(): 
-            alignment_channel = 561
-           
-        try:
-            print(xy_channels)
-            xy_align_func.xy_align(experiment_folder, xy_channels, alignment_channel)
-        except Exception as e: 
-            error_dialog = QtWidgets.QErrorMessage()
-            error_dialog.setWindowTitle("Error!") 
-            error_dialog.showMessage("XY Align Failed: " + str(e)) 
-            error_dialog.exec() 
-            return 
-        try:
-            z_align_func.z_align(experiment_folder, alignment_channel) 
-        except Exception as e: 
-            error_dialog = QtWidgets.QErrorMessage()
-            error_dialog.setWindowTitle("Error!") 
-            error_dialog.showMessage("Z Align Failed: " + str(e)) 
-            error_dialog.exec() 
-            return 
-            
-        # If this is done running then just have a success box!
-        msg = QtWidgets.QMessageBox()
-        msg.setWindowTitle("Success")
-        msg.setText('Process executed successfully!')
-        msg.exec()    
-            
+        if not experiment_folder:
+            self.showError("Full Analysis", "Choose an experiment folder first.")
+            return
+        if not channels:
+            self.showError("Full Analysis", "Tick at least one STORM channel.")
+            return
+        if alignment_channel is None:
+            self.showError("Full Analysis", "Tick an alignment channel (561 or 488).")
+            return
+
+        # Existing results. The old dialog offered to delete them but never did
+        # (the delete code was commented out). Nothing is deleted here either:
+        # fitting resumes existing results, the user can continue or cancel.
+        exp = os.path.normpath(experiment_folder)
+        acq = os.path.join(exp, "acquisition")
+        found = [p for p in (os.path.join(acq, "bead_registration"), os.path.join(acq, "bins"),
+                             os.path.join(acq, "real_bins"), os.path.join(exp, "stormtiffs"),
+                             os.path.join(exp, "analysis"), os.path.join(exp, "distcorr"))
+                 if os.path.isdir(p) and os.listdir(p)]
+        if found and not self.confirmExistingResults(found):
+            return
+
+        def fit(log, cancel):
+            return scmos_func.batch_fitting(experiment_folder, num_processes, channels,
+                                            log=log, cancel_event=cancel)
+
+        def xy(log, cancel):
+            return xy_align_func.xy_align(experiment_folder, xy_channels, alignment_channel)
+
+        def z(log, cancel):
+            return z_align_func.z_align(experiment_folder, alignment_channel)
+
+        self.startJob("Full analysis", [("Batch fitting", fit), ("XY alignment", xy),
+                                        ("Z alignment", z)])
+
     def updateDisplay(self, horizontalSlider, spinBox):
         spinBox.setValue(horizontalSlider.value())
 
     def handleLoadExpFolder(self):
-        exp_folder = QtWidgets.QFileDialog.getExistingDirectory()
-        self.ui.exp_lbl.setText(exp_folder)
+        exp_folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Choose Experiment Folder",
+                                                                self.directory)
+        if exp_folder:
+            self.setExperimentFolder(exp_folder)
+
+    def setExperimentFolder(self, folder):
+        self.ui.exp_lbl.setText(folder)
+        self.ui.exp_lbl.setVisible(True)
+        missing = [d for d in ("acquisition", "XMLs") if not os.path.isdir(os.path.join(folder, d))]
+        if missing:
+            self.exp_hint.setText("Missing: " + ", ".join(m + "/" for m in missing))
+            self.exp_hint.setStyleSheet("color: #ff9f43;")
+        else:
+            n = len(glob.glob(os.path.join(folder, "acquisition", "*.dax")))
+            self.exp_hint.setText(f"{n} movie(s) in acquisition/")
+            self.exp_hint.setStyleSheet("color: #9a9a9a;")
+        self.statusBar().showMessage("Experiment folder: " + folder, 10000)
 
     def open_input_parameters_dlg(self):
         # Keep a reference on the window. As a local variable the dialog was
@@ -705,29 +704,91 @@ class Window(QtWidgets.QMainWindow):
         frame_range_dlg.exec()
         frame_range_dlg.show()
         
-    def showOverrideDialog(self, message):
-        msgBox = QtWidgets.QMessageBox()
-        msgBox.setIcon(QtWidgets.QMessageBox.Icon.Information)
-        msgBox.setText(message + "\n" + "Would you like to delete these files before running?")
-        msgBox.setWindowTitle("Warning: Files Found!")
-        msgBox.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No | QtWidgets.QMessageBox.StandardButton.Cancel)
+    def confirmExistingResults(self, folders):
+        box = QtWidgets.QMessageBox(self)
+        box.setIcon(QtWidgets.QMessageBox.Icon.Information)
+        box.setWindowTitle("Existing results found")
+        box.setText("<b>Existing results found</b>")
+        box.setInformativeText("This experiment already has results in:\n\n" +
+                    "\n".join(" - " + f for f in folders) +
+                    "\n\nNothing will be deleted. Fitting picks up where it stopped "
+                    "and finished movies are kept.")
+        cont = box.addButton("Continue", QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(QtWidgets.QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(cont)
+        box.exec()
+        return box.clickedButton() is cont
 
-        returnValue = msgBox.exec()
-        if returnValue == QtWidgets.QMessageBox.StandardButton.Yes:
-            print('OK clicked')
-            return 0
-        elif returnValue == QtWidgets.QMessageBox.StandardButton.No:
-            print('No clicked')
-            return 1
-        elif returnValue == QtWidgets.QMessageBox.StandardButton.Cancel:
-            print('Cancel clicked')
-            return 2
-        return -1 
+    # ---- background jobs
+    def isBusy(self):
+        return self._worker_thread is not None and self._worker_thread.isRunning()
+
+    def startJob(self, title, steps, on_success=None):
+        worker, thread = start_worker(self, steps)
+        self._job_title = title
+        self._job_on_success = on_success
+        worker.log.connect(self.appendLog)
+        worker.progress.connect(self._onProgress)
+        worker.step_started.connect(lambda s: self.progress_bar.setFormat(s + "…"))
+        worker.succeeded.connect(self._onJobSucceeded)
+        worker.failed.connect(self._onJobFailed)
+        worker.cancelled.connect(lambda: self.statusBar().showMessage(title + " cancelled.", 15000))
+        worker.done.connect(self._onJobDone)
+        self.setRunning(True, title)
+        self.appendLog(f"\n##### {title} started #####")
+        thread.start()
+
+    def setRunning(self, running, title=""):
+        for w in (self.ui.fit_btn, self.ui.multifit_btn, self.ui.load_exp_btn,
+                  self.ui.test_params_btn, self.ui.frame_rg_btn):
+            w.setEnabled(not running)
+        self.cancel_btn.setEnabled(running)
+        if running:
+            self.progress_bar.setRange(0, 0)          # busy until the first [i/n] line
+            self.progress_bar.setFormat(title + "…")
+            self.statusBar().showMessage(title + " running. You can keep using the viewer.")
+        else:
+            self.progress_bar.setRange(0, 100)
+
+    def appendLog(self, line):
+        self.log_view.appendPlainText(line)
+
+    def _onProgress(self, label, i, n):
+        self.progress_bar.setRange(0, n)
+        self.progress_bar.setValue(i - 1)
+        self.progress_bar.setFormat(f"{label} {i}/{n}")
+
+    def _onJobSucceeded(self, results):
+        self.progress_bar.setValue(self.progress_bar.maximum())
+        self.progress_bar.setFormat(self._job_title + " done")
+        self.statusBar().showMessage(self._job_title + " finished.", 15000)
+        if self._job_on_success:
+            self._job_on_success(results)
+
+    def _onJobFailed(self, step, message):
+        self.progress_bar.setFormat(f"{step} failed")
+        self.statusBar().showMessage(f"{step} failed. See the log.", 15000)
+        self.showError(f"{step} failed", message[:2000])
+
+    def _onJobDone(self):
+        self.setRunning(False)
+        if self.progress_bar.format().endswith("…"):
+            self.progress_bar.setFormat("Cancelled")
+        self._worker_thread = None
+
+    def cancelJob(self):
+        if self._worker is not None and self.isBusy():
+            self.appendLog("Cancelling…")
+            self.progress_bar.setFormat("Cancelling…")
+            self._worker.cancel()
 
     def capture(self):
-        pixmap = self.movie_view.grab()
-        pixmap.save("capture.png")
-        print("Capture size:", pixmap.width(), pixmap.height())
+        name = QtWidgets.QFileDialog.getSaveFileName(self, "Save View as PNG",
+                                                     os.path.join(self.directory or "", "capture.png"),
+                                                     "PNG image (*.png)")[0]
+        if name:
+            self.movie_view.grab().save(name)
+            self.statusBar().showMessage("Saved " + name, 10000)
 
     def cleanUp(self):
         for elt in [self.locs1_list, self.locs2_list]:
@@ -742,6 +803,10 @@ class Window(QtWidgets.QMainWindow):
         self.settings.setValue("size", self.size())
 
     def closeEvent(self, event):
+        if self.isBusy():
+            self._worker.cancel()
+            self._worker_thread.quit()
+            self._worker_thread.wait(5000)
         self.cleanUp()
 
     def displayFrame(self, update_locs):
@@ -774,115 +839,86 @@ class Window(QtWidgets.QMainWindow):
                                      self.ui.maxSpinBox.value())
                                      
     def handleDragDrop(self, file):
-    
         if file.endswith(('bin', 'hdf5')):
-            list_filename = file
-            if self.locs1_list is not None:
-                self.locs1_list.cleanUp()
-            self.directory = os.path.dirname(list_filename)
-            if saH5Py.isSAHDF5(list_filename):
-                self.locs1_list = MoleculeListHDF5(filename = list_filename,
-                                                   mtype = "l1")
-            else:
-                self.locs1_list = MoleculeListI3(filename = list_filename,
-                                                 mtype = "l1")
-            self.locs1_table.showFields(self.locs1_list.getFields())
-            self.incCurFrame(0)
+            self.loadLocalizations(file, 1)
         elif file.endswith(('dax', 'spe', 'tif', 'fits')):
-            movie_filename = file 
-            self.directory = os.path.dirname(movie_filename)
-            self.movie_file = datareader.inferReader(movie_filename)
-            [self.film_x, self.film_y, self.film_l] = self.movie_file.filmSize()
-            print(self.film_l)
-            self.cur_frame = 0
+            self.loadMovieFile(file)
 
-            # Clear molecule lists.
-            for elt in [self.locs1_list, self.locs2_list]:
-                if elt is not None:
-                    elt.cleanUp()
-            self.locs1_list = None
-            self.locs2_list = None
+    def loadLocalizations(self, list_filename, which):
+        old = self.locs1_list if which == 1 else self.locs2_list
+        if old is not None:
+            old.cleanUp()
+        self.directory = os.path.dirname(list_filename)
+        mtype = "l1" if which == 1 else "l2"
+        if saH5Py.isSAHDF5(list_filename):
+            new = MoleculeListHDF5(filename = list_filename, mtype = mtype)
+        else:
+            new = MoleculeListI3(filename = list_filename, mtype = mtype)
+        if which == 1:
+            self.locs1_list = new
+            self.locs1_table.showFields(new.getFields())
+        else:
+            self.locs2_list = new
+            self.locs2_table.showFields(new.getFields())
+        self.incCurFrame(0)
 
-            # Hide info displays
-            self.locs1_table.hideFields()
-            self.locs2_table.hideFields()
+    def loadMovieFile(self, movie_filename):
+        """Shared by Load Movie, drag and drop, and the test fit result. (Drag and
+        drop used to skip the label updates, so the frame count stayed wrong.)"""
+        self.directory = os.path.dirname(movie_filename)
+        self.movie_file = datareader.inferReader(movie_filename)
+        [self.film_x, self.film_y, self.film_l] = self.movie_file.filmSize()
+        self.cur_frame = 0
 
-            # Reset view transform.
-            self.movie_view.setTransform(QtGui.QTransform())
+        # Clear molecule lists.
+        for elt in [self.locs1_list, self.locs2_list]:
+            if elt is not None:
+                elt.cleanUp()
+        self.locs1_list = None
+        self.locs2_list = None
 
-            self.incCurFrame(0)
+        # Hide info displays
+        self.locs1_table.hideFields()
+        self.locs2_table.hideFields()
 
-            # Add text to the label
-            self.ui.mov_path_lbl.setText(movie_filename)
-            
-    
-      
+        # Block signals: shrinking the maximum clamps the box value, and that change
+        # used to jump the viewer to the last frame.
+        self.ui.frame_spin_box.blockSignals(True)
+        self.ui.frame_spin_box.setMaximum(max(1, self.film_l))
+        self.ui.frame_spin_box.setValue(1)
+        self.ui.frame_spin_box.blockSignals(False)
+        self.cur_frame = 0
+        self.incCurFrame(0)
+        self.ui.mov_path_lbl.setText(movie_filename)
+        self.ui.nmPerPixLabel_2.setText("of {}".format(self.film_l))
+        self.fitContrastSliderToMovie()
+        self.movie_view.resetZoom()
+        self.statusBar().showMessage(f"{os.path.basename(movie_filename)}: {self.film_l} frames, "
+                                     f"{self.film_x} x {self.film_y} pixels", 10000)
+
     def handleLoadLocs1(self):
         list_filename = QtWidgets.QFileDialog.getOpenFileName(self,
-                                                              "Load Localization List 1",
+                                                              "Overlay Localizations 1",
                                                               self.directory,
-                                                              "*.bin *.hdf5")[0]
+                                                              "Localizations (*.bin *.hdf5)")[0]
         if list_filename:
-            if self.locs1_list is not None:
-                self.locs1_list.cleanUp()
-            self.directory = os.path.dirname(list_filename)
-            if saH5Py.isSAHDF5(list_filename):
-                self.locs1_list = MoleculeListHDF5(filename = list_filename,
-                                                   mtype = "l1")
-            else:
-                self.locs1_list = MoleculeListI3(filename = list_filename,
-                                                 mtype = "l1")
-            self.locs1_table.showFields(self.locs1_list.getFields())
-            self.incCurFrame(0)
+            self.loadLocalizations(list_filename, 1)
 
     def handleLoadLocs2(self):
         list_filename = QtWidgets.QFileDialog.getOpenFileName(self,
-                                                              "Load Localization List 2",
+                                                              "Overlay Localizations 2",
                                                               self.directory,
-                                                              "*.bin *.hdf5")[0]
+                                                              "Localizations (*.bin *.hdf5)")[0]
         if list_filename:
-            if self.locs2_list is not None:
-                self.locs2_list.cleanUp()
-            self.directory = os.path.dirname(list_filename)
-            if saH5Py.isSAHDF5(list_filename):
-                self.locs2_list = MoleculeListHDF5(filename = list_filename,
-                                                   mtype = "l2")
-            else:
-                self.locs2_list = MoleculeListI3(filename = list_filename,
-                                                 mtype = "l2")
-            self.locs2_table.showFields(self.locs2_list.getFields())
-            self.incCurFrame(0)
+            self.loadLocalizations(list_filename, 2)
 
     def handleLoadMovie(self):
         movie_filename = QtWidgets.QFileDialog.getOpenFileName(self,
-                                                               "Load Movie",
+                                                               "Open Movie",
                                                                self.directory,
-                                                               "*.dax *.fits *.spe *.tif")[0]
+                                                               "Movies (*.dax *.fits *.spe *.tif)")[0]
         if movie_filename:
-            self.directory = os.path.dirname(movie_filename)
-            self.movie_file = datareader.inferReader(movie_filename)
-            [self.film_x, self.film_y, self.film_l] = self.movie_file.filmSize()
-            self.cur_frame = 0
-
-            # Clear molecule lists.
-            for elt in [self.locs1_list, self.locs2_list]:
-                if elt is not None:
-                    elt.cleanUp()
-            self.locs1_list = None
-            self.locs2_list = None
-
-            # Hide info displays
-            self.locs1_table.hideFields()
-            self.locs2_table.hideFields()
-
-            # Reset view transform.
-            self.movie_view.setTransform(QtGui.QTransform())
-
-            self.incCurFrame(0)
-
-            # Add text to the label
-            self.ui.mov_path_lbl.setText(movie_filename)
-            self.ui.nmPerPixLabel_2.setText("of {}".format(self.film_l))
+            self.loadMovieFile(movie_filename)
 
     def handleLocsDisplayTimer(self):
         self.displayFrame(True)
@@ -903,8 +939,10 @@ class Window(QtWidgets.QMainWindow):
         self.locs_display_timer.start()
 
     def handleRangeChange(self, range_min, range_max):
-        self.ui.minSpinBox.setValue(range_min)
-        self.ui.maxSpinBox.setValue(range_max)
+        # The range slider sends floats. PyQt5 rounded them silently; PyQt6 raises
+        # TypeError, which crashed the app on any contrast slider drag.
+        self.ui.minSpinBox.setValue(int(round(range_min)))
+        self.ui.maxSpinBox.setValue(int(round(range_max)))
         self.displayFrame(False)
         self.locs_display_timer.start()
 
@@ -936,6 +974,49 @@ class Window(QtWidgets.QMainWindow):
             self.incCurFrame(-200)
         if (event.key() == QtCore.Qt.Key.Key_L):
             self.incCurFrame(200)
+        if (event.key() == QtCore.Qt.Key.Key_A):
+            self.autoContrast()
+        if (event.key() == QtCore.Qt.Key.Key_R):
+            self.movie_view.resetZoom()
+
+    def fitContrastSliderToMovie(self):
+        """The slider spanned 0..65535, about 150 counts per pixel, so typical STORM
+        data (~100..2000) used the bottom few pixels. Fit it to this movie instead."""
+        frame = self.movie_file.loadAFrame(0)
+        top = max(1000, int(np.ceil(np.percentile(frame, 99.99) * 2)),
+                  self.ui.maxSpinBox.value())
+        top = min(top, self.ui.maxSpinBox.maximum())
+        self.rangeSlider.setRange([self.ui.minSpinBox.minimum(), top, 1.0])
+        self.rangeSlider.updateDisplayValues()
+        self.rangeSlider.update()
+
+    def autoContrast(self, region=None, lo_pct=1.0, hi_pct=99.5):
+        """Set the display range from percentiles of the current frame, or of the
+        given box (scene/pixel coordinates) if one is passed."""
+        data = self.movie_view.data
+        if not isinstance(data, np.ndarray):
+            return None
+        if region is not None:
+            h, w = data.shape
+            x0 = int(max(0, np.floor(region.left())));  x1 = int(min(w, np.ceil(region.right())))
+            y0 = int(max(0, np.floor(region.top())));   y1 = int(min(h, np.ceil(region.bottom())))
+            if x1 - x0 < 2 or y1 - y0 < 2:
+                return None
+            data = data[y0:y1, x0:x1]
+        lo, hi = np.percentile(data, [lo_pct, hi_pct])
+        lo, hi = int(np.floor(lo)), int(np.ceil(hi))
+        if hi <= lo:
+            hi = lo + 1
+        lo = max(lo, self.ui.minSpinBox.minimum())
+        hi = min(hi, self.ui.maxSpinBox.maximum())
+        # Order matters so the min never passes the max on the way.
+        if lo > self.ui.maxSpinBox.value():
+            self.ui.maxSpinBox.setValue(hi); self.ui.minSpinBox.setValue(lo)
+        else:
+            self.ui.minSpinBox.setValue(lo); self.ui.maxSpinBox.setValue(hi)
+        where = "box" if region is not None else "frame"
+        self.statusBar().showMessage(f"Contrast set from {where}: {lo} to {hi}", 8000)
+        return lo, hi
 
     def quit(self):
         self.close()
