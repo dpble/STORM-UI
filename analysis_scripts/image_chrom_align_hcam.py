@@ -1,5 +1,5 @@
 import tifffile as timg;
-from tifffile import imsave;
+from tifffile import imwrite as imsave;  # imsave was removed from tifffile
 import skimage as skimg;
 import scipy
 import cv2

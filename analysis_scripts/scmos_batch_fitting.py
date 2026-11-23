@@ -24,7 +24,7 @@ import storm_analysis.sa_library.sa_h5py as saH5Py
 
 import storm_analysis.sa_library.batch_run as batchRun
 import storm_analysis.sa_library.datareader as datareader
-import storm_analysis.Name_Correction as N_C
+# import storm_analysis.Name_Correction as N_C  # lab-local module, not in any repo; only use (line 44) is commented out
 
 from .gen_bead_warp_hcam import * 
 

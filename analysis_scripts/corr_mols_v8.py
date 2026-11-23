@@ -43,7 +43,7 @@ def corr_mols(set1_pos_x, set1_pos_y, set2_pos_x, set2_pos_y, tform_start, match
     num_mols_set1 = len(set1_pos_x);
     
     #matching_set2_inds = np.zeros(num_mols_set1);
-    matching_set2_inds=np.zeros((num_mols_set1,), dtype=np.int)-1
+    matching_set2_inds=np.zeros((num_mols_set1,), dtype=int)-1
     
     #% overlap set2 onto set1 (shift, or also warp, depending on tform_start)
     

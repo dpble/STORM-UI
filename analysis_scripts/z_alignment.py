@@ -8,8 +8,11 @@ import shutil
 import datetime
 import subprocess
 
-from cproc import *
-from reorder import *
+try:  # cproc and reorder are lab-local modules missing from the repo
+    from cproc import *
+    from reorder import *
+except ImportError:
+    pass
 
 from crop_datastack import * 
 from wga_norm_and_thresh import * 

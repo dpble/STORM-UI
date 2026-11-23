@@ -5,8 +5,11 @@ import sys
 import shutil
 import datetime
 import subprocess
-from cproc import *
-from reorder import *
+try:  # cproc and reorder are lab-local modules missing from the repo
+    from cproc import *
+    from reorder import *
+except ImportError:
+    pass
 
 def z_align(expfolder):
     exp_folder = os.path.normpath(expfolder) + "\\analysis\\"

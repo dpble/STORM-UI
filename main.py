@@ -743,7 +743,7 @@ class Window(QtWidgets.QMainWindow):
                 self.cur_frame = self.film_l - 1
 
             # Get the current frame.
-            frame = self.movie_file.loadAFrame(self.cur_frame).astype(np.float)
+            frame = self.movie_file.loadAFrame(self.cur_frame).astype(float)
 
             # Create localization list 1 molecule items.
             nm_per_pixel = self.ui.nmPerPixelSpinBox.value()
