@@ -68,16 +68,42 @@ def test_wheel_zoom_and_frame_scroll(win, app):
 
 
 def test_contrast_range_slider_drag(win, app):
+    """Drag the slider's min handle. The slider emits floats; PyQt6 rejects floats
+    in QSpinBox.setValue, which crashed the app before the fix."""
     s = win.rangeSlider
     T = QtCore.QEvent.Type
-    w, h = s.width(), s.height()
-    mid = (w // 2, h // 2)
-    mouse(s, T.MouseButtonPress, mid)
-    mouse(s, T.MouseMove, (mid[0], max(1, mid[1] - 10)))
-    mouse(s, T.MouseButtonRelease, (mid[0], max(1, mid[1] - 10)))
+    s.updateDisplayValues()
+    # vertical slider: getPos() = height - y, min handle sits just below display_min
+    handle_y = s.height() - (s.display_min - 0.5 * s.bar_width)
+    x = s.width() // 2
+    before = win.ui.minSpinBox.value()
+    mouse(s, T.MouseButtonPress, (x, handle_y))
+    assert s.moving == "min"
+    mouse(s, T.MouseMove, (x, handle_y - 15))
+    mouse(s, T.MouseButtonRelease, (x, handle_y - 15))
     app.processEvents()
-    lo, hi = win.ui.minSpinBox.value(), win.ui.maxSpinBox.value()
-    assert lo <= hi
+    after = win.ui.minSpinBox.value()
+    assert after > before, (before, after)          # the drag really changed the range
+    assert after <= win.ui.maxSpinBox.value()
+
+
+def test_contrast_slider_min_never_passes_max(win, app):
+    """Original bug: dragging min past max moved the max handle but not its value."""
+    s = win.rangeSlider
+    T = QtCore.QEvent.Type
+    s.updateDisplayValues()
+    handle_y = s.height() - (s.display_min - 0.5 * s.bar_width)
+    x = s.width() // 2
+    mouse(s, T.MouseButtonPress, (x, handle_y))
+    mouse(s, T.MouseMove, (x, 25))                  # far past the max handle
+    mouse(s, T.MouseButtonRelease, (x, 25))
+    app.processEvents()
+    assert win.ui.minSpinBox.value() <= win.ui.maxSpinBox.value()
+
+
+def test_contrast_slider_fits_movie_range(win):
+    # test.dax values are well under 65535; the slider top should be near the data
+    assert win.rangeSlider.start + win.rangeSlider.scale < 65535
 
 
 def test_drop_path_is_valid_on_this_os(win):
