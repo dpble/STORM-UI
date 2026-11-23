@@ -49,7 +49,7 @@ def test_test_fit_accuracy_vs_ground_truth(exp):
     assert r["false_positives"] < 0.01 * r["fitted"]
     assert r["median_error_nm"] < 10.0
     # converted .bin written too
-    assert os.path.exists(os.path.join(exp, "acquisition", "test_fits", "647storm_00_mlist.bin"))
+    assert os.path.exists(out[0][:-5] + ".bin")
 
 
 def test_test_fit_rerun_uses_new_parameters(exp, tmp_path):
@@ -171,3 +171,41 @@ def test_batch_rerun_and_cancel_preserve_preexisting_results(tmp_path, monkeypat
     assert sorted(x.name for x in (tmp_path / "batch_fits").iterdir()) == sorted(
         [Path(first["output_dir"]).name, Path(second["output_dir"]).name])
     assert all(path.read_bytes() == contents for path, contents in previous.items())
+
+
+def test_settings_snapshot_keeps_calibration_relative_to_xml_link(tmp_path):
+    target = tmp_path / "target"
+    linked = tmp_path / "linked"
+    target.mkdir()
+    linked.mkdir()
+    original = target / "647.xml"
+    original.write_text('<settings><camera_calibration type="filename">cal.npy</camera_calibration></settings>')
+    (target / "cal.npy").write_bytes(b"wrong calibration")
+    (linked / "cal.npy").write_bytes(b"correct calibration")
+    xml = linked / "647.xml"
+    try:
+        xml.symlink_to(original)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"Cannot create a symlink on this runner: {exc}")
+    from pathlib import Path
+    from xml.etree import ElementTree as ET
+    snapshot = Path(pu.FitSettingsSnapshot(tmp_path / "snapshot").copy(xml))
+    calibration = ET.parse(snapshot).findtext("camera_calibration")
+    assert (snapshot.parent / calibration).read_bytes() == b"correct calibration"
+
+
+def test_batch_finds_alternate_movie_names_and_reports_missing_channels(tmp_path, monkeypatch):
+    from analysis_scripts import scmos_batch_fitting as batch
+    mte.make(str(tmp_path), channels=("647",), small=True)
+    acquisition = tmp_path / "acquisition"
+    for suffix in (".dax", ".inf"):
+        (acquisition / f"647storm_00{suffix}").rename(acquisition / f"647_00{suffix}")
+    seen = []
+    def track_jobs(cmds, workers, log, cancel, label):
+        seen.extend(cmds)
+    monkeypatch.setattr(batch, "run_jobs", track_jobs)
+    with pytest.raises(pu.PipelineError, match="selected channel 750"):
+        batch.batch_fitting(str(tmp_path), 1, ["647", "750"], log=quiet([]))
+    assert not seen
+    batch.batch_fitting(str(tmp_path), 1, ["647"], log=quiet([]))
+    assert any(str(acquisition / "647_00.dax") in cmd for cmd in seen)

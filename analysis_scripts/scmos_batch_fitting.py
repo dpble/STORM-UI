@@ -25,6 +25,8 @@ import storm_analysis.sa_library.datareader as datareader
 from .pipeline_utils import (Cancelled, FitSettingsSnapshot, HDF5_TO_BIN, HDF5_TO_IMAGE,
                              PYTHON, PipelineError, fit_cmd, run_jobs)
 
+from .fitting_parameters_evaluation import find_test_movies
+
 # Bead movie -> (output suffix, XML). Unchanged from the original.
 BEAD_FITS = [("_Vis647mlist.hdf5", "Visbead_647.xml"),
              ("_561mlist.hdf5", "Visbead_561.xml"),
@@ -76,12 +78,12 @@ def _fit_batch(acquisition, xml_folder, stage, max_processes, selected_channels,
     for channel in selected_channels:
         base = str(channel)
         xml = os.path.join(xml_folder, base + ".xml")
-        movies = sorted(glob.glob(os.path.join(input_directory, base + "storm_*.dax")))
+        movies = find_test_movies(input_directory, base, -1)
         if not movies:
-            log(f"{base}: no movies found")
-            continue
+            raise PipelineError(f"No movies found for selected channel {base}")
         if not os.path.isfile(xml):
             raise PipelineError(f"Missing parameters file {xml}")
+        before = len(storm_cmds)
         for movie_file in movies:
             if datareader.inferReader(movie_file).filmSize()[2] <= 0:
                 continue
@@ -89,6 +91,8 @@ def _fit_batch(acquisition, xml_folder, stage, max_processes, selected_channels,
             log(f"Analyzing {os.path.basename(movie_file)} with {os.path.basename(xml)}")
             storm_cmds.append(fit_cmd(movie_file, mlist, snapshots.copy(xml)))
             h5_by_channel.setdefault(base + "storm", []).append(mlist)
+        if len(storm_cmds) == before:
+            raise PipelineError(f"No nonempty movies found for selected channel {base}")
     if not storm_cmds:
         raise PipelineError("No STORM movies found for the selected channels in " + input_directory)
 

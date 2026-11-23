@@ -79,7 +79,10 @@ def test_test_parameters_loads_experiment_xmls(win, app, exp):
 
 def test_changed_threshold_is_used_by_test_fit(win, app, exp):
     """The whole point of the dialog: edit a parameter, test fit with it."""
+    from pathlib import Path
     def run_fit():
+        root = Path(exp) / "acquisition" / "test_fits"
+        previous = set(root.glob("run-*"))
         win.ui.checkBox647.setChecked(True)
         win.ui.fit_frame_select.setValue(0)
         win.ui.fit_btn.click()
@@ -88,11 +91,11 @@ def test_changed_threshold_is_used_by_test_fit(win, app, exp):
             app.processEvents(); time.sleep(0.02)
         assert not win.isBusy(), "Test Fit did not finish"
         assert win.progress_bar.format() == "Test fit done", win.log_view.toPlainText()
-        h5 = os.path.join(exp, "acquisition", "test_fits", "647storm_00_mlist.hdf5")
+        h5 = str(next(iter(set(root.glob("run-*")) - previous)) / "647storm_00_mlist.hdf5")
         with saH5Py.SAH5Reader(h5) as f:
-            return f.getNLocalizations()
+            return f.getNLocalizations(), h5
 
-    before = run_fit()
+    before, first_h5 = run_fit()
     win.open_input_parameters_dlg()
     d = win.input_parameters_dlg
     d.ui.ef647.setValue(20)                     # fit frames 0..20 instead of 0..50
@@ -101,8 +104,8 @@ def test_changed_threshold_is_used_by_test_fit(win, app, exp):
     xml = os.path.join(exp, "XMLs", "647.xml")
     assert xml_value(xml, "max_frame") == "20"
     assert float(xml_value(xml, "threshold")) == 30.0
-    after = run_fit()
-    h5 = os.path.join(exp, "acquisition", "test_fits", "647storm_00_mlist.hdf5")
+    after, h5 = run_fit()
+    assert h5 != first_h5 and os.path.exists(first_h5)
     with saH5Py.SAH5Reader(h5) as f:
         frames = sorted({fn for fn, locs in f.localizationsIterator(fields=["x"]) if locs["x"].size})
     assert frames[-1] < 20, frames[-1]              # the new frame range was used
@@ -178,3 +181,30 @@ def test_invalid_later_xml_leaves_all_originals_untouched(tmp_path):
         save_edits([(a, {"start_frame": "5"}), (b, {"start_frame": "60"})])
     assert a.read_bytes() == b.read_bytes() == old
     assert len(list(tmp_path.iterdir())) == 2
+
+
+def test_duplicate_xml_targets_are_rejected(tmp_path):
+    from gui.xml_settings import save_edits
+    xml = tmp_path / "settings.xml"
+    data = b"<settings><start_frame>0</start_frame><max_frame>50</max_frame></settings>"
+    xml.write_bytes(data)
+    with pytest.raises(ValueError, match="only once"):
+        save_edits([(xml, {"start_frame": "5"}), (xml, {"max_frame": "20"})])
+    assert xml.read_bytes() == data
+
+
+def test_xml_replace_error_reports_applied_files(tmp_path, monkeypatch):
+    from gui import xml_settings
+    a, b = tmp_path / "a.xml", tmp_path / "b.xml"
+    for path in (a, b):
+        path.write_bytes(b"<settings><start_frame>0</start_frame></settings>")
+    replace = os.replace
+    def fail_second(src, dst):
+        if dst == b:
+            raise PermissionError("file locked")
+        replace(src, dst)
+    monkeypatch.setattr(xml_settings.os, "replace", fail_second)
+    with pytest.raises(OSError, match="Already saved: .*a.xml"):
+        xml_settings.save_edits([(a, {"start_frame": "1"}), (b, {"start_frame": "2"})])
+    assert b">1<" in a.read_bytes()
+    assert b">0<" in b.read_bytes()

@@ -20,7 +20,7 @@ Open **Help** in the app for the quick start and viewer controls. In short:
 choose the experiment folder (with `acquisition/` and `XMLs/`), tick channels,
 **Run Test Fit** on one movie to check the XML parameters (the result opens in
 the viewer), then **Run Batch Fit**. Jobs run in the background with a progress
-bar, log, and Cancel. Test Fit writes to `acquisition/test_fits/`. Each successful
+bar, log, and Cancel. Each Test Fit writes to a new `acquisition/test_fits/run-*` folder. Each successful
 batch writes to a new `batch_fits/run-*` folder and never resumes another run.
 Previously completed outputs are not overwritten. XY and Z alignment are not
 available in the GUI. Use only trusted experiment XML and calibration files:

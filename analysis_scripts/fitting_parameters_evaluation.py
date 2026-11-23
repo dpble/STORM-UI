@@ -20,6 +20,7 @@ import glob
 import os
 import re
 import tempfile
+import uuid
 
 import storm_analysis.sa_library.datareader as datareader
 
@@ -83,8 +84,10 @@ def fitting_params(expfolder, max_processes, selected_channels, movie_idx,
     # every fit and conversion completes, so a failed or cancelled run keeps
     # the previous results intact.
     with tempfile.TemporaryDirectory(prefix=".staging-", dir=bin_folder) as staging:
-        staged = [os.path.join(staging, os.path.basename(o)) for o in outputs]
-        snapshots = FitSettingsSnapshot(os.path.join(staging, "settings"))
+        stage = os.path.join(staging, "results")
+        os.mkdir(stage)
+        staged = [os.path.join(stage, os.path.basename(o)) for o in outputs]
+        snapshots = FitSettingsSnapshot(os.path.join(stage, "settings"))
         for cmd, path in zip(cmd_lines, staged):
             cmd[-1] = snapshots.copy(cmd[-1])
             cmd[cmd.index("--bin") + 1] = path
@@ -93,9 +96,9 @@ def fitting_params(expfolder, max_processes, selected_channels, movie_idx,
         run_jobs(conv, max_processes, log, cancel_event, label="conversion")
         if cancel_event is not None and cancel_event.is_set():
             raise Cancelled("Cancelled before publishing test fit")
-        for src, dst in zip(staged, outputs):
-            os.replace(src, dst)
-            os.replace(src[:-5] + ".bin", dst[:-5] + ".bin")
+        final = os.path.join(bin_folder, f"run-{uuid.uuid4().hex}")
+        os.rename(stage, final)
+        outputs = [os.path.join(final, os.path.basename(path)) for path in staged]
     log(f"Done: {len(outputs)} movie(s) fitted.")
     return outputs
 

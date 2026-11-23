@@ -13,9 +13,14 @@ def read_settings(path):
 
 def save_edits(edits):
     staged = []
+    targets = set()
+    applied = []
     try:
         for filename, changes in edits:
             path = Path(filename).resolve(strict=True)
+            if path in targets:
+                raise ValueError(f"More than one edit targets {path}. Select each XML only once.")
+            targets.add(path)
             tree = read_settings(path)
             for key, text in changes.items():
                 node = tree.find(key)
@@ -32,7 +37,12 @@ def save_edits(edits):
                 tree.write(temp, encoding=tree.docinfo.encoding or "UTF-8", xml_declaration=True)
             shutil.copymode(path, temp.name)
         for temp, path in staged:
-            os.replace(temp, path)
+            try:
+                os.replace(temp, path)
+            except OSError as exc:
+                saved = ", ".join(str(item) for item in applied) or "none"
+                raise OSError(f"Could not replace {path}. Already saved: {saved}. {exc}") from exc
+            applied.append(path)
     finally:
         for temp, _ in staged:
             Path(temp).unlink(missing_ok=True)

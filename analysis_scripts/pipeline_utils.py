@@ -43,7 +43,7 @@ class FitSettingsSnapshot:
         self.inputs = {}
 
     def copy(self, filename):
-        source = Path(filename).resolve()
+        source = Path(os.path.abspath(filename))
         if source in self.xmls:
             return self.xmls[source]
         try:

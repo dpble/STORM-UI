@@ -619,7 +619,7 @@ class Window(QtWidgets.QMainWindow):
         if not outputs:
             return
         h5 = outputs[0]
-        movie = os.path.join(os.path.dirname(os.path.dirname(h5)),
+        movie = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(h5))),
                              os.path.basename(h5).replace("_mlist.hdf5", ".dax"))
         if os.path.exists(movie):
             self.loadMovieFile(movie)
