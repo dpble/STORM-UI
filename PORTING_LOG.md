@@ -98,4 +98,3 @@ Mouse move/press/release on the movie, wheel zoom, contrast slider drag, drop pa
 - Replace bare imports with package imports so run_dev.sh is no longer needed.
 - Move the remaining hardcoded paths into configs/ (about 25 in analysis_scripts: Fiji, `C:/Program Files/Python36/.../storm_analysis/...`, test folders). These block the fitting and alignment buttons on any PC but the original one. Phase 3.
 - Smaller GUI issues: drag-and-drop does not update the "of N" frame count; frame box shows decimals ("1.00"); "MS Shell Dlg 2" font is Windows-only.
-- Remove the 2021 `__pycache__/*.pyc` files committed to the repo.
