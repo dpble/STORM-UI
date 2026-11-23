@@ -173,6 +173,13 @@ class QRangeSlider(QtWidgets.QWidget):
         if (self.moving == "max") or (self.moving == "bar"):
             self.scale_max = self.start + (self.display_max - self.bar_width)/float(size) * self.scale
             self.scale_max = float(round(self.scale_max/self.single_step))*self.single_step
+        # Dragging one handle past the other moved the other handle on screen but
+        # not its value, so the slider could report min > max. Keep them ordered.
+        if self.scale_min > self.scale_max:
+            if self.moving == "min":
+                self.scale_max = self.scale_min
+            else:
+                self.scale_min = self.scale_max
         self.updateDisplayValues()
         self.update()
 
