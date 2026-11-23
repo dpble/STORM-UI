@@ -12,8 +12,7 @@ instructions for Fiji, macros and XML paths still apply to XY/Z alignment.
      `git clone https://github.com/ZhuangLab/storm-analysis ../storm-analysis` and `pip install -e ../storm-analysis`
    - **Linux:** `sudo apt install libfftw3-dev liblapack-dev`, then the same clone + `pip install -e`.
 2. `pip install -r requirements.txt`
-3. Run: `./run_dev.sh main.py` (macOS/Linux). On Windows, set PYTHONPATH as in
-   `run_dev.sh` (repo, `analysis_scripts`, storm_analysis and its `sa_library`), then `python main.py`.
+3. From the checkout, with the virtual environment active, run `python main.py`. No custom `PYTHONPATH` is needed.
 
 ## Using it
 

@@ -3,13 +3,13 @@ import glob
 import os
 import sys
 from PIL import Image, ImageFilter, ImageOps
-import sa_library.datareader as daxspereader
+import storm_analysis.sa_library.datareader as daxspereader
 import numpy
 import subprocess
 from scipy import misc, ndimage
 import re
-import sa_library.arraytoimage as arraytoimage
-import sa_library.i3togrid as i3togrid
+import storm_analysis.sa_library.arraytoimage as arraytoimage
+import storm_analysis.sa_library.i3togrid as i3togrid
 import math
 import time
 import subprocess
@@ -35,7 +35,7 @@ def xy_align(expfolder, selected_channels, alignment_channel):
     assert alignment_channel in [488, 561]
     
     # Read in parameters from yaml file 
-    with open('./configs/bead_analysis_params.yml') as f:
+    with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'configs', 'bead_analysis_params.yml')) as f:
             config = yaml.safe_load(f)
 
     shape = (config['shape_h'], config['shape_w'], 1)

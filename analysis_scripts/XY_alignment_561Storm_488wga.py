@@ -2,13 +2,13 @@ import glob
 import os
 import sys
 from PIL import Image, ImageFilter, ImageOps
-import sa_library.datareader as daxspereader
+import storm_analysis.sa_library.datareader as daxspereader
 import numpy
 import subprocess
 from scipy import misc, ndimage
 import re
-import sa_library.arraytoimage as arraytoimage
-import sa_library.i3togrid as i3togrid
+import storm_analysis.sa_library.arraytoimage as arraytoimage
+import storm_analysis.sa_library.i3togrid as i3togrid
 import math
 import time
 import subprocess

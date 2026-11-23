@@ -7,8 +7,8 @@ Setup: make a simulated experiment and open the app.
 
 ```
 cd STORM-UI
-./run_dev.sh tools/make_test_experiment.py ~/stormpro-demo --channels 647 750 --sections 2 --beads 1
-./run_dev.sh main.py
+python tools/make_test_experiment.py ~/stormpro-demo --channels 647 750 --sections 2 --beads 1
+python main.py
 ```
 
 On Windows, use `python tools\make_test_experiment.py ...` and `python main.py`

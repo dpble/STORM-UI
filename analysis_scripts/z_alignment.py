@@ -14,8 +14,8 @@ try:  # cproc and reorder are lab-local modules missing from the repo
 except ImportError:
     pass
 
-from crop_datastack import * 
-from wga_norm_and_thresh import * 
+from .crop_datastack import *
+from .wga_norm_and_thresh import *
 
 def z_align(expfolder, alignment_channel):
 

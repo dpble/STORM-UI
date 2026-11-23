@@ -177,3 +177,7 @@ For the next alignment run, request one small complete lab experiment with
 conventional, flat-field, STORM and registration bead movies, their `.inf`
 sidecars, the matching `XMLs/` and calibration, and a reference aligned result
 if available. Use a disposable working copy for validation.
+
+## Standard launch
+
+Run `python main.py` with the virtual environment active. The app and tests no longer need custom `PYTHONPATH` entries for the lab scripts or storm-analysis. The startup test opens the main window from an unrelated working directory in a fresh process.
