@@ -110,7 +110,7 @@ def test_drop_path_is_valid_on_this_os(win):
     mime = QtCore.QMimeData()
     mime.setUrls([QtCore.QUrl.fromLocalFile(TEST_DAX)])
     path = win.movie_view.droppedPath(mime)
-    assert path == TEST_DAX and os.path.exists(path)
+    assert os.path.samefile(path, TEST_DAX)
 
 
 def test_set_test_parameters_dialog_stays_open(win, app):

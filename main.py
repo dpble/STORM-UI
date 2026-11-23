@@ -211,13 +211,17 @@ class MoleculeListHDF5(MoleculeList):
                        "iterations",
                        "significance"]
 
-        self.reader = saH5Py.SAH5Py(filename)
+        self.filename = filename
 
     def cleanUp(self):
-        self.reader.close(verbose = False)
+        # There is no persistent file handle to close.
+        pass
 
     def loadLocalizations(self, frame_number, nm_per_pixel):
-        locs = self.reader.getLocalizationsInFrame(frame_number)
+        # A persistent HDF5 handle prevents Windows from replacing a Test Fit
+        # result on rerun. Read the frame, then release the handle immediately.
+        with saH5Py.SAH5Reader(self.filename) as reader:
+            locs = reader.getLocalizationsInFrame(frame_number)
         if bool(locs):
             if ("xsigma" in locs) and (not "ysigma" in locs):
                 locs["ysigma"] = locs["xsigma"]

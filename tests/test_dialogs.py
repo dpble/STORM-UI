@@ -86,6 +86,8 @@ def test_changed_threshold_is_used_by_test_fit(win, app, exp):
         t0 = time.time()
         while win.isBusy() and time.time() - t0 < 120:
             app.processEvents(); time.sleep(0.02)
+        assert not win.isBusy(), "Test Fit did not finish"
+        assert win.progress_bar.format() == "Test fit done", win.log_view.toPlainText()
         h5 = os.path.join(exp, "acquisition", "test_fits", "647storm_00_mlist.hdf5")
         with saH5Py.SAH5Reader(h5) as f:
             return f.getNLocalizations()
