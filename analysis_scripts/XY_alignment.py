@@ -18,7 +18,18 @@ import yaml
 from .bead_processing import * 
 from .combined_matlab_conversion import * 
 
+from pathlib import Path
+from .pipeline_utils import PipelineError
+
+
 def xy_align(expfolder, selected_channels, alignment_channel):
+    # Check required raw inputs before legacy code creates any output paths.
+    acquisition = Path(expfolder) / "acquisition"
+    required = {"Conv_*.dax": "conventional movies", "FFC_*.dax": "flat-field movies"}
+    missing = [f"{description} ({pattern})" for pattern, description in required.items()
+               if not any(path.is_file() for path in acquisition.glob(pattern))]
+    if missing:
+        raise PipelineError(f"Missing XY alignment inputs in {acquisition}: " + "; ".join(missing))
 
     # Assert that alignment channels == 488 or 561
     assert alignment_channel in [488, 561]

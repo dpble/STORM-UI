@@ -163,3 +163,17 @@ Correction (Phase B): the Phase 2 slider test pressed in the middle of the slide
 - XY and Z alignment (question 8), Fiji path and memory into configs/.
 - Replace bare imports with package imports (tests no longer need run_dev.sh; the app still does).
 - Sync the `.ui` files (question 6). "MS Shell Dlg 2" font warning from the dialog .ui stylesheets.
+
+## Alignment input check
+
+XY alignment checks `acquisition/` for conventional `Conv_*.dax` and flat-field
+`FFC_*.dax` movies before calling legacy processing. If either is absent, the
+error lists the exact directory and missing patterns without creating output
+folders. This checks presence only; it does not validate frames, calibration,
+Fiji macros, or XY/Z output. Two regression cases failed before the fix and
+passed afterward; the full macOS suite passed 43 tests.
+
+For the next alignment run, request one small complete lab experiment with
+conventional, flat-field, STORM and registration bead movies, their `.inf`
+sidecars, the matching `XMLs/` and calibration, and a reference aligned result
+if available. Use a disposable working copy for validation.
