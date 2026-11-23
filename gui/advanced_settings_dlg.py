@@ -27,8 +27,11 @@ if hasattr(QtCore.Qt, 'AA_UseHighDpiPixmaps'):
 
 class AdvancedSettingsDialog(QDialog):
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, xml_dir=None, **kwargs):
+        """xml_dir: the experiment's XMLs/ folder, the files Test Fit reads.
+        Without it, falls back to the paths in configs/XMLs.yml (original behavior)."""
         super(AdvancedSettingsDialog, self).__init__(*args, **kwargs)
+        self.xml_dir = xml_dir
 
         self.ui = Ui_Dialog()
         self.ui.setupUi(self)
@@ -56,14 +59,20 @@ class AdvancedSettingsDialog(QDialog):
         self.psfs = [self.ui.psf488, self.ui.psf561, self.ui.psf647, self.ui.psf750]
         self.checkBoxes = [self.ui.checkBox488, self.ui.checkBox561, self.ui.checkBox647, self.ui.checkBox750]
         
-        # Auto-Load 
+        # Auto-load each channel's XML. The original always used configs/XMLs.yml
+        # (placeholder paths), not the experiment's XMLs/ that Test Fit reads, and
+        # showed an error popup for every file it could not find.
         with open(XMLS_YML) as f:
             self.config = yaml.safe_load(f)
-        self.findXML(self.ui.pathLbl488, self.ui.thresh488, 0, self.config[488])
-        self.findXML(self.ui.pathLbl561, self.ui.thresh561, 1, self.config[561])
-        self.findXML(self.ui.pathLbl647, self.ui.thresh647, 2, self.config[647])
-        self.findXML(self.ui.pathLbl750, self.ui.thresh750, 3, self.config[750])
-          
+        for i, ch in enumerate((488, 561, 647, 750)):
+            path = os.path.join(xml_dir, f"{ch}.xml") if xml_dir else self.config[ch]
+            if os.path.exists(path):
+                self.findXML(self.labels[i], self.threshs[i], i, path)
+            else:
+                self.labels[i].setText("")
+                self.labels[i].setToolTip(f"Not found: {path}")
+        if xml_dir:
+            self.setWindowTitle("Test Parameters: " + xml_dir)
 
     def findXML(self, label, thresh, channel, fileName=None):
         
@@ -98,10 +107,11 @@ class AdvancedSettingsDialog(QDialog):
             cb = self.checkBoxes[channel]
             
             for child in root:
+                # Frame boxes are integer spin boxes: PyQt6 rejects floats (crash).
                 if child.tag == "start_frame":
-                    sf.setValue(float(child.text))
+                    sf.setValue(int(float(child.text)))
                 if child.tag == "max_frame":
-                    ef.setValue(float(child.text))
+                    ef.setValue(int(float(child.text)))
                 if child.tag == "background_sigma":
                     bs.setValue(float(child.text))
                 if child.tag == "foreground_sigma":
@@ -111,8 +121,7 @@ class AdvancedSettingsDialog(QDialog):
                 if child.tag == "sigma":
                     psf.setValue(float(child.text))
                 if child.tag == "drift_correction":
-                    if child.text == str(1):
-                        cb.setChecked(True)
+                    cb.setChecked(child.text.strip() == "1")
 
     def updateXML(self):
 

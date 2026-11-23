@@ -20,8 +20,9 @@ from .frame_range_dlg_ui import *
 
 class FrameRangeDialog(QDialog):
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, xml_dir=None, **kwargs):
         super(FrameRangeDialog, self).__init__(*args, **kwargs)
+        self.xml_dir = xml_dir
 
         self.ui = Ui_Dialog()
         self.ui.setupUi(self)
@@ -37,45 +38,58 @@ class FrameRangeDialog(QDialog):
         
         with open(XMLS_YML) as f:
             self.config = yaml.safe_load(f)
+        # Show the values that are in the files now (the original showed defaults).
+        for sf, ef, channel in zip(self.sfs, self.efs, [488, 561, 647, 750]):
+            path = self.xmlPath(channel)
+            if os.path.exists(path):
+                root = lxmlET.parse(path).getroot()
+                for child in root:
+                    if child.tag == "start_frame":
+                        sf.setValue(int(float(child.text)))
+                    if child.tag == "max_frame":
+                        ef.setValue(int(float(child.text)))
+            else:
+                sf.setEnabled(False); ef.setEnabled(False)
+                sf.setToolTip(f"Not found: {path}"); ef.setToolTip(f"Not found: {path}")
+        if xml_dir:
+            self.setWindowTitle("Frame Ranges: " + xml_dir)
+
+    def xmlPath(self, channel):
+        # The experiment's XMLs/ (what fitting reads), else configs/XMLs.yml.
+        if self.xml_dir:
+            return os.path.join(self.xml_dir, f"{channel}.xml")
+        return self.config[channel]
 
   
     def send_params(self):
-
-        sfs = []
-        efs = []
-
+        # Write every channel whose XML exists. The original returned at the first
+        # missing file, after already writing the earlier channels.
+        written, missing = [], []
         for sf, ef, channel in zip(self.sfs, self.efs, [488, 561, 647, 750]):
-
-            file_path = self.config[channel]
-            if os.path.exists(file_path):
-                tree = lxmlET.parse(file_path)
-                root = tree.getroot()
-            else:
-                self.error_dialog = QErrorMessage()
-                self.error_dialog.setWindowTitle('Error')
-                self.error_dialog.showMessage('Please enter valid XML path for channel {}!'.format(channel))
-                return
-
-            # Second need to find necessary variables of interest that will be edited for each XML file
-            for child in root:
+            file_path = self.xmlPath(channel)
+            if not os.path.exists(file_path):
+                missing.append(str(channel))
+                continue
+            tree = lxmlET.parse(file_path)
+            for child in tree.getroot():
                 if child.tag == "start_frame":
                     child.text = str(sf.value())
                 if child.tag == "max_frame":
                     child.text = str(ef.value())
-            if tree:
-                tree.write(file_path)
-
-        msg = QMessageBox()
-        msg.setWindowTitle("Success")
-        msg.setText('Frame ranges are set!')
+            tree.write(file_path)
+            written.append(str(channel))
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Frame ranges")
+        text = "Frame ranges saved for " + (", ".join(written) or "no channels") + "."
+        if missing:
+            text += "\nNo XML file for " + ", ".join(missing) + "."
+        msg.setText(text)
         msg.exec()
-        
-        self.close() 
-
-        return (sfs, efs)
+        self.accept()
+        return written, missing
 
     def cancel(self):
-        self.close()
+        self.reject()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

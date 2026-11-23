@@ -696,13 +696,17 @@ class Window(QtWidgets.QMainWindow):
     def open_input_parameters_dlg(self):
         # Keep a reference on the window. As a local variable the dialog was
         # garbage collected as soon as this method returned, so it closed instantly.
-        self.input_parameters_dlg = AdvancedSettingsDialog()
+        self.input_parameters_dlg = AdvancedSettingsDialog(self, xml_dir=self.experimentXmlDir())
         self.input_parameters_dlg.show()
 
+    def experimentXmlDir(self):
+        d = os.path.join(self.experimentFolder(), "XMLs") if self.experimentFolder() else ""
+        return d if d and os.path.isdir(d) else None
+
     def open_frame_range_dlg(self):
-        frame_range_dlg = FrameRangeDialog()
-        frame_range_dlg.exec()
-        frame_range_dlg.show()
+        # (The original called show() after exec(), so the dialog reopened after OK/Cancel.)
+        self.frame_range_dlg = FrameRangeDialog(self, xml_dir=self.experimentXmlDir())
+        self.frame_range_dlg.exec()
         
     def confirmExistingResults(self, folders):
         box = QtWidgets.QMessageBox(self)
