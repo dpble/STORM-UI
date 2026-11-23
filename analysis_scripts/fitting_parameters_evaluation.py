@@ -1,169 +1,99 @@
 #!/usr/bin/python
 #
-# Batch multifit analysis.
-# 
-# Colenso 05_30_18
+# Test fitting: fit a small part of one STORM movie per channel with the
+# current XML parameters, so the parameters can be checked before the full run.
+#
+# Colenso 05_30_18. Rewritten 2026-11 for Python 3.12 / any OS:
+#  - paths built with os.path.join (were Windows "\\" strings)
+#  - storm-analysis scripts found from the installed package, run with the
+#    current Python (were hardcoded to C:/Program Files/Python36/...)
+#  - movie_idx = -1 ("all movies") matched no files: the glob had a literal "{}"
+#  - the "already fitted" check looked for 647storm_*_mlist.bin in bins/, which is
+#    never written there (fits are .hdf5), so it never skipped; removed
+#  - a previous result for the same movie is removed first; storm-analysis
+#    resumes existing files, so new parameters were silently ignored on re-runs
+#  - failed fits raise an error (batchRun ignored exit codes)
+#  - no matching movies raises an error instead of reporting success
+#  - only the movies fitted now are converted to .bin (was every .hdf5 in bins/)
 
 import glob
-import os, time, datetime
-
-import multiprocessing
-import signal
-import subprocess
-import sys
-import threading
-from tqdm import tqdm 
-import shutil 
-
-import numpy
-import math
-from subprocess import *
-import datareader
+import os
 import re
-import arraytoimage
-import i3togrid
-from PIL import Image
-import storm_analysis.sa_library.sa_h5py as saH5Py
 
-import storm_analysis.sa_library.batch_run as batchRun
 import storm_analysis.sa_library.datareader as datareader
 
-def fitting_params(expfolder, max_processes, selected_channels, movie_idx, debug=False):
-    
-    if debug: print('Entered fitting params') 
-    # set path to raw data files
-    #expfolder = "Z:\\Chenghang\\chenghaz006_1.31.2019\\"
-    expfolder = os.path.normpath(expfolder) 
-    XML_folder = expfolder + "\\XMLs\\"
+try:
+    from analysis_scripts.pipeline_utils import (HDF5_TO_BIN, PYTHON, PipelineError,
+                                                 fit_cmd, remove_previous_output, run_jobs)
+except ImportError:
+    from pipeline_utils import (HDF5_TO_BIN, PYTHON, PipelineError,
+                                fit_cmd, remove_previous_output, run_jobs)
 
-    # set directory for raw STORM .DAX files
-    input_directory = expfolder + "\\acquisition\\"
-    # make directory for bead registration output
+MINIMUM_LENGTH = 100   # frames; shorter movies are skipped (unchanged from original)
 
-    # create new directory for bead alignment files
-    if not os.path.exists(input_directory + "bead_registration\\"):
-        os.mkdir(input_directory + "bead_registration\\")
-    bead_registration = input_directory + "bead_registration\\"
 
-    # create new directory for bin files
-    if not os.path.exists(input_directory + "bins\\"):
-        os.mkdir (input_directory + "bins\\")
-    bin_folder = input_directory + "bins\\"
+def find_test_movies(input_directory, channel, movie_idx):
+    """Movies for one channel. movie_idx >= 0 selects the movie whose trailing
+    number equals movie_idx (647storm_03.dax for 3); -1 selects all of them.
+    (The original glob "*3.dax" also matched 647storm_13.dax, 647storm_23.dax, ...)"""
+    movies = sorted(glob.glob(os.path.join(input_directory, f"{channel}*.dax")))
+    if movie_idx is None or movie_idx < 0:
+        return movies
+    pat = re.compile(r"(\d+)\.dax$")
+    return [m for m in movies if pat.search(m) and int(pat.search(m).group(1)) == int(movie_idx)]
 
-    if debug: print('Created directories') 
-    
-    print(len(glob.glob(bin_folder + "647storm_*_mlist.bin")))
 
-    # If there are no previous STORM molecule lists found, start the STORM analysis
-    if len(glob.glob(bin_folder + "647storm_*_mlist.bin")) == 0: 
-        # Which color channels are you analyzing?   
-        #channels = ["750","647","561","488","IRbead","Visbead"]
-        #channels = ["750", "647","561","488"]
-        channels = selected_channels 
-        cmd_lines = []
-        # setup automated STORM analysis
-        for channel in (channels):
-                    
-         #for  i in range (iterations):
-            base = str(channel)
-                       
-            # set output directory for analyzed molecule lists
-            output_directory = input_directory + "bins\\"
-            # set path to analysis parameters
-            
-            multi_xml = XML_folder + base + ".xml"
-            # set minimum length of .DAX file for analysis
-            
-            
-            minimum_length = 100
-            # create list of all .DAX files in STORM directory (all if -1 otherwise select specific frames) 
-            if movie_idx >= 0:
-                dax_files = glob.glob(input_directory + base + "*{}.dax".format(movie_idx))
-            else:
-                dax_files = glob.glob(input_directory + base + "*{}.dax")
-            # dax_files =glob.glob(input_directory + base + "*{}.dax".format(movie_idx)) if movie_idx >= 0 else glob.glob(input_directory + base + "*{}.dax")
-           
-            
-            # set path to multi-fit analysis code
-            mufit_exe = "C:/Program Files/Python36/Lib/site-packages/storm_analysis/sCMOS/scmos_analysis.py"
+def fitting_params(expfolder, max_processes, selected_channels, movie_idx,
+                   debug=False, log=print, cancel_event=None):
+    """Returns the list of fitted .hdf5 files."""
+    expfolder = os.path.normpath(expfolder)
+    xml_folder = os.path.join(expfolder, "XMLs")
+    input_directory = os.path.join(expfolder, "acquisition")
+    bin_folder = os.path.join(input_directory, "bins")
+    real_bins = os.path.join(input_directory, "real_bins")
 
-            # start processes
-            # for each STORM movie
-            for movie_file in dax_files:
-                # read the file information and determine if it is long enough
-                movie_obj = datareader.inferReader(movie_file)
-                if(movie_obj.filmSize()[2] > minimum_length):
-                    # set file name parameters for jobs
-                    print("Analyzing:", movie_file,"with xml file",multi_xml)
-                    basename = os.path.basename(movie_file)
-                    mlistname = output_directory + "/" + basename[:-4] + "_mlist.hdf5"
-                    # start fitting
-                    cmd_lines.append(['python', mufit_exe,
-                                      "--movie", movie_file,
-                                      "--bin", mlistname,
-                                      "--xml", multi_xml])
-            # run the fitting in a batch with the specified number of concurrent processes
-        print(cmd_lines)
-        if debug:
-            import pdb; pdb.set_trace() 
-        
-        batchRun.batchRun(cmd_lines, max_processes = max_processes)
-                    
-    if debug: print('Ran Fitting!')
-    
-    # where are your data?
-    storm_folder = expfolder + "\\acquisition\\"
-    input_directory = storm_folder + "bins\\"
-    output_directory = storm_folder + "real_bins\\"
+    if not os.path.isdir(input_directory):
+        raise PipelineError(f"No acquisition folder in {expfolder}")
+    for d in (os.path.join(input_directory, "bead_registration"), bin_folder, real_bins):
+        os.makedirs(d, exist_ok=True)
 
-    # Mkdir for the output folder.
-    if not os.path.exists(output_directory):
-        os.mkdir(output_directory)
-
-    # which imaging channels are you saving?
-    channels = ["750storm", "647storm", "561storm","488storm"]
-
-    cmd_lines = []
-    
-    if debug: print('Automated Analysis') 
-    
-    # setup automated analysis
-    for channel in tqdm(channels):
-     #for  i in range (iterations):
+    cmd_lines, outputs = [], []
+    for channel in selected_channels:
         base = str(channel)
-     # create list of all .hdf5 files in BIN directory
-        h5_files =glob.glob(input_directory + base + "*.hdf5")
-     # set path to multi-fit analysis code
-        hdf5_to_bin = "C:/Program Files/Python36/Lib/site-packages/storm_analysis/sa_utilities/hdf5_to_bin.py"
-        
-        if debug:
-            import pdb
-            pdb.set_trace()
+        xml = os.path.join(xml_folder, base + ".xml")
+        if not os.path.isfile(xml):
+            raise PipelineError(f"Missing parameters file {xml}")
+        movies = find_test_movies(input_directory, base, movie_idx)
+        if not movies:
+            log(f"{base}: no movie matches index {movie_idx}")
+        for movie_file in movies:
+            n_frames = datareader.inferReader(movie_file).filmSize()[2]
+            if n_frames <= MINIMUM_LENGTH:
+                log(f"Skipping {os.path.basename(movie_file)}: {n_frames} frames (needs > {MINIMUM_LENGTH})")
+                continue
+            mlist = os.path.join(bin_folder, os.path.basename(movie_file)[:-4] + "_mlist.hdf5")
+            remove_previous_output(mlist, log)
+            log(f"Analyzing {os.path.basename(movie_file)} with {os.path.basename(xml)}")
+            cmd_lines.append(fit_cmd(movie_file, mlist, xml))
+            outputs.append(mlist)
 
-     # start processes
-        for h5_file in tqdm(h5_files):
-                
-            print ("Found:", h5_file)
-            h5_filename = os.path.basename(h5_file)
-            print("Converting:",h5_filename)
-            bin_out_name = output_directory + h5_filename[:-5] + ".bin"
-            cmd_lines.append(['python', hdf5_to_bin,
-                                "--hdf5", h5_file,
-                                "--bin", bin_out_name
-                                ])
-    if debug:
-        import pdb
-        pdb.set_trace()
-    
-    print(cmd_lines)
-    batchRun.batchRun(cmd_lines, max_processes = max_processes)
-    
-    if debug: print('Done!') 
+    if not cmd_lines:
+        raise PipelineError("No movies to fit. Check the channels, the movie index, and that "
+                            f"movies are named like 647storm_00.dax in {input_directory}")
+
+    run_jobs(cmd_lines, max_processes, log, cancel_event, label="fit")
+
+    # Convert the new results to Insight3 .bin files (as before, into real_bins/).
+    conv = []
+    for h5 in outputs:
+        out_bin = os.path.join(real_bins, os.path.basename(h5)[:-5] + ".bin")
+        remove_previous_output(out_bin, log)
+        conv.append([PYTHON, HDF5_TO_BIN, "--hdf5", h5, "--bin", out_bin])
+    run_jobs(conv, max_processes, log, cancel_event, label="conversion")
+    log(f"Done: {len(outputs)} movie(s) fitted.")
+    return outputs
 
 
 if __name__ == "__main__":
-    exp_folder = "C:/Users/Vatsal/QT_Projects/GUI_XY"
-    # exp_folder = "C:/Users/Jerry Yang/Desktop/Test_bead_data" 
-    selected_channels = ['750']
-    max_processes = 50
-    fitting_params(exp_folder, max_processes, selected_channels, debug=True)
+    import sys
+    fitting_params(sys.argv[1], 2, sys.argv[2:] or ["647"], 0)
