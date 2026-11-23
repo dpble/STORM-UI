@@ -55,13 +55,47 @@ Also needed `image_registration` (Adam Ginsburg's package, used by py_dftregistr
 1. Are `cproc.py`, `reorder.py`, and `Name_Correction.py` on the lab computer? Z-alignment imports the first two.
 2. z_alignment.py calls `fiji_z_align1_488wga.py`, `fiji_z_align2_488wga.py`, `fiji_z_align3_488wga.py`, but `macros/` only has the `_FullChannel` versions of the 488 scripts and no `fiji_z_align3_488wga.py`. Are the others somewhere?
 3. Fiji path is hardcoded to `C:/Users/Colenso/Fiji.app/ImageJ-win64` with `-Xms50g -Xmx50g`. Is the lab analysis PC still Windows with 64+ GB RAM? (Plan: move path and memory into configs/.)
-4. Which steps still use MATLAB (gen_bead_warp_hcam, test_bead_warp_hcam, wga_norm_and_thresh)? Is MATLAB still part of the workflow?
+4. MATLAB: Samarth's understanding is it is still part of the workflow, now called from the code. Which .m steps run today (gen_bead_warp_hcam, test_bead_warp_hcam, wga_norm_and_thresh)? Note `image_chrom_align_hcam.py` is MATLAB code saved as .py and is not imported anywhere.
 5. Paths are built with `"\\"` in several scripts (Windows-only). OK to switch to `os.path.join` so it runs on Mac/Linux too?
 
-## Next: PyQt6 port (Phase 2)
+6. The `gui/ui/*.ui` Designer files are older than the `gui/*_ui.py` files the app runs (frame box maximums, colors, a removed label). OK to update the .ui files to match, so future Designer edits do not undo those changes?
 
-- Regenerate gui/*_ui.py from gui/ui/*.ui with pyuic6.
-- Scoped enums (`Qt.Key_End` -> `Qt.Key.Key_End`), `exec_()` -> `exec()`, QAction moved to QtGui, mouse event `.pos()` changes.
-- Replace qtmodern (PyQt5 only).
+## Phase 2: PyQt6 port (done 2026-11-23)
+
+Status: **app runs on PyQt6 6.12.1 with PyQt5 uninstalled. 11 of 11 tests pass**, also in a fresh venv built only from the new requirements.txt.
+
+### How it was ported
+
+- `tools/pyqt5_to_6.py` rewrites scoped enums by asking PyQt6 which nested enum holds each name (no hand-written table), moves QAction to QtGui, `exec_()` -> `exec()`. It prints every rewrite. 172 rewrites across 10 files.
+- The `gui/*_ui.py` files were ported directly, not regenerated, because the `.ui` sources are stale (see question 6). Regenerating would have reset the frame boxes to Qt's default maximum of 99.
+- `qtmodern` (PyQt5 only) replaced by `gui/dark_theme.py`: Fusion style with a dark palette, same look, no dependency.
+- requirements.txt rewritten: 14 packages the code actually imports, pinned to tested versions (was 110 pins for Python 3.6, most unused, pandas never imported).
+
+### PyQt6 breakages fixed by hand
+
+| File | Problem | Fix |
+|------|---------|-----|
+| main.py | `RenderHint.A + RenderHint.B`: PyQt6 enums cannot be added | `\|` |
+| gui/qtRangeSlider.py | `Qt.gray` etc.: lowercase color enums | `Qt.GlobalColor.gray` (converter widened) |
+| gui/qtRangeSlider.py | `event.x()`/`event.y()` removed. **Any click on the contrast slider would crash the app** | `event.position().x()` |
+| gui/*_dlg.py | `QFileDialog.Options()` removed | `QFileDialog.Option(0)` |
+
+### Bugs in the original code (also present on PyQt5)
+
+| File | Problem | Fix |
+|------|---------|-----|
+| main.py dropEvent | Path taken as `text()[8:]`, only valid on Windows. On Mac it dropped the leading `/` | `QUrl.toLocalFile()` |
+| main.py open_input_parameters_dlg | "Set Test Parameters" dialog was a local variable, garbage collected on return, so it closed instantly. **Confirmed on the original PyQt5 code: 0 dialogs open after the click** | Keep a reference on the window |
+| gui/advanced_settings_dlg.py, gui/frame_range_dlg.py | Config path hardcoded to `C:\Users\Vatsal\QT_Projects\...`. Both dialogs crashed on any other PC | Path relative to the repo |
+| 6 files | `yaml.load(f)` needs a Loader in PyYAML 6 | `yaml.safe_load(f)` |
+
+### Tests added (`tests/test_interaction.py`)
+
+Mouse move/press/release on the movie, wheel zoom, contrast slider drag, drop path on this OS, Set Test Parameters stays open, Frame Range dialog opens, all 3 dialogs build.
+
+## Still to do
+
 - Replace bare imports with package imports so run_dev.sh is no longer needed.
-- Move hardcoded paths into configs/.
+- Move the remaining hardcoded paths into configs/ (about 25 in analysis_scripts: Fiji, `C:/Program Files/Python36/.../storm_analysis/...`, test folders). These block the fitting and alignment buttons on any PC but the original one. Phase 3.
+- Smaller GUI issues: drag-and-drop does not update the "of N" frame count; frame box shows decimals ("1.00"); "MS Shell Dlg 2" font is Windows-only.
+- Remove the 2021 `__pycache__/*.pyc` files committed to the repo.
