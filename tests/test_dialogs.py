@@ -208,3 +208,28 @@ def test_xml_replace_error_reports_applied_files(tmp_path, monkeypatch):
         xml_settings.save_edits([(a, {"start_frame": "1"}), (b, {"start_frame": "2"})])
     assert b">1<" in a.read_bytes()
     assert b">0<" in b.read_bytes()
+
+
+def test_invalid_or_duplicate_parameters_disable_only_that_channel(app, exp):
+    from pathlib import Path
+    from gui.frame_range_dlg import FrameRangeDialog
+    root = Path(exp) / "XMLs"
+    (root / "647.xml").write_text("<settings><start_frame>not-a-number</start_frame></settings>")
+    (root / "750.xml").write_text("<settings><start_frame>0</start_frame><start_frame>2</start_frame></settings>")
+    editor = FrameRangeDialog(xml_dir=str(root))
+    assert not editor.ui.sf_spinBox_647.isEnabled()
+    assert not editor.ui.sf_spinBox_750.isEnabled()
+    assert editor.ui.sf_spinBox_488.isEnabled()
+
+
+def test_stale_xml_version_is_refused(tmp_path):
+    from gui.xml_settings import fingerprint, save_edits
+    xml = tmp_path / "647.xml"
+    old = b"<settings><start_frame>0</start_frame></settings>"
+    xml.write_bytes(old)
+    version = fingerprint(xml)
+    changed = old.replace(b">0<", b">3<")
+    xml.write_bytes(changed)
+    with pytest.raises(ValueError, match="changed since it was opened"):
+        save_edits([(xml, {"start_frame": "2"})], {xml: version})
+    assert xml.read_bytes() == changed

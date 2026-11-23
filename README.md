@@ -9,7 +9,7 @@ instructions for Fiji, macros and XML paths still apply to XY/Z alignment.
 1. storm-analysis (not on PyPI):
    - **Windows:** `pip install https://github.com/ZhuangLab/storm-analysis/releases/download/v2.4.1/storm_analysis-2.4.1-py3-none-win_amd64.whl`
    - **macOS:** `brew install fftw lapack`, then
-     `git clone https://github.com/ZhuangLab/storm-analysis ../storm-analysis` and `pip install -e ../storm-analysis`
+     `git clone --branch v2.4.1 --depth 1 https://github.com/ZhuangLab/storm-analysis ../storm-analysis` and `pip install -e ../storm-analysis`
    - **Linux:** `sudo apt install libfftw3-dev liblapack-dev`, then the same clone + `pip install -e`.
 2. `pip install -r requirements.txt`
 3. From the checkout, with the virtual environment active, run `python main.py`. No custom `PYTHONPATH` is needed.
@@ -22,7 +22,8 @@ choose the experiment folder (with `acquisition/` and `XMLs/`), tick channels,
 the viewer), then **Run Batch Fit**. Jobs run in the background with a progress
 bar, log, and Cancel. Each Test Fit writes to a new `acquisition/test_fits/run-*` folder. Each successful
 batch writes to a new `batch_fits/run-*` folder and never resumes another run.
-Previously completed outputs are not overwritten. XY and Z alignment are not
+Previously completed outputs are not overwritten. Each run includes `run.json` with the source movie,
+zero-based start and exclusive stop frames, and run-relative settings and output paths. XY and Z alignment are not
 available in the GUI. Use only trusted experiment XML and calibration files:
 storm-analysis can load calibration files using pickle.
 

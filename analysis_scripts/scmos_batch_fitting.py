@@ -14,16 +14,15 @@
 #  - each run writes new results without resuming or changing old output
 
 
-import glob
 import os
 from pathlib import Path
 import tempfile
 import uuid
 
-import storm_analysis.sa_library.datareader as datareader
 
 from .pipeline_utils import (Cancelled, FitSettingsSnapshot, HDF5_TO_BIN, HDF5_TO_IMAGE,
-                             PYTHON, PipelineError, fit_cmd, run_jobs)
+                             PYTHON, PipelineError, fit_cmd, run_jobs, plan_fit,
+                             verify_fits, verify_artifacts, write_manifest, check_cancel)
 
 from .fitting_parameters_evaluation import find_test_movies
 
@@ -67,13 +66,14 @@ def _fit_batch(acquisition, xml_folder, stage, max_processes, selected_channels,
     bin_folder, real_bins, storm_tiffs = (stage / name for name in ("bins", "real_bins", "stormtiffs"))
     bin_folder.mkdir(parents=True)
     real_bins.mkdir()
-    snapshots = FitSettingsSnapshot(stage / "settings")
+    snapshots = FitSettingsSnapshot(stage / "settings", cancel_event)
     selected_channels = list(dict.fromkeys(str(ch) for ch in selected_channels))
     if any(ch + "storm" not in RENDER_SIGMA for ch in selected_channels):
         raise PipelineError("Invalid STORM channel")
 
     # 1. STORM movies, all selected channels in one batch.
     storm_cmds = []
+    records = []
     h5_by_channel = {}
     for channel in selected_channels:
         base = str(channel)
@@ -83,36 +83,37 @@ def _fit_batch(acquisition, xml_folder, stage, max_processes, selected_channels,
             raise PipelineError(f"No movies found for selected channel {base}")
         if not os.path.isfile(xml):
             raise PipelineError(f"Missing parameters file {xml}")
-        before = len(storm_cmds)
         for movie_file in movies:
-            if datareader.inferReader(movie_file).filmSize()[2] <= 0:
-                continue
             mlist = os.path.join(bin_folder, os.path.basename(movie_file)[:-4] + "_mlist.hdf5")
             log(f"Analyzing {os.path.basename(movie_file)} with {os.path.basename(xml)}")
-            storm_cmds.append(fit_cmd(movie_file, mlist, snapshots.copy(xml)))
+            settings = snapshots.copy(xml)
+            records.append(plan_fit(movie_file, mlist, settings, log, cancel_event))
+            storm_cmds.append(fit_cmd(movie_file, mlist, settings))
             h5_by_channel.setdefault(base + "storm", []).append(mlist)
-        if len(storm_cmds) == before:
-            raise PipelineError(f"No nonempty movies found for selected channel {base}")
     if not storm_cmds:
         raise PipelineError("No STORM movies found for the selected channels in " + input_directory)
 
     # 2. Bead registration movies (Regbead*.dax), each fitted with 5 bead XMLs.
     bead_cmds = []
-    for movie_file in sorted(glob.glob(os.path.join(input_directory, "Regbead*.dax"))):
-        if datareader.inferReader(movie_file).filmSize()[2] <= 1:
-            continue
+    for movie_file in sorted(str(path) for path in acquisition.iterdir()
+                             if path.is_file() and path.name.lower().startswith("regbead")
+                             and path.suffix == ".dax"):
         stem = os.path.join(bin_folder, os.path.basename(movie_file)[:-4])
         for suffix, xml_name in BEAD_FITS:
             xml = os.path.join(xml_folder, xml_name)
             if not os.path.isfile(xml):
                 raise PipelineError(f"Missing bead parameters file {xml}")
             log(f"Analyzing {os.path.basename(movie_file)} with {xml_name}")
-            bead_cmds.append(fit_cmd(movie_file, stem + suffix, snapshots.copy(xml)))
+            settings = snapshots.copy(xml)
+            records.append(plan_fit(movie_file, stem + suffix, settings, log, cancel_event))
+            bead_cmds.append(fit_cmd(movie_file, stem + suffix, settings))
     run_jobs(storm_cmds, max_processes, log, cancel_event, label="STORM fit")
     if bead_cmds:
         run_jobs(bead_cmds, max_processes, log, cancel_event, label="bead fit")
     else:
         log("No Regbead*.dax bead movies found; skipping bead fitting.")
+
+    verify_fits(records, cancel_event)
 
     # 3. Convert STORM results to .bin.
     conv = []
@@ -136,6 +137,9 @@ def _fit_batch(acquisition, xml_folder, stage, max_processes, selected_channels,
                              "--scale", str(STORM_IMAGE_SCALE), "--sigma", str(RENDER_SIGMA[c])])
                 tiffs.append(out)
         run_jobs(cmds, max_processes, log, cancel_event, label="render")
+
+    verify_artifacts(bins + tiffs)
+    write_manifest(stage, records)
 
     # Bead registration (gen_bead_warp_hcam) was commented out in the original
     # and is still not run here.

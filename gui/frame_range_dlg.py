@@ -10,7 +10,7 @@ from functools import partial
 
 import xml.etree.ElementTree as ET
 from lxml import etree
-from .xml_settings import read_settings, save_edits
+from .xml_settings import fingerprint, read_settings, save_edits
 import yaml 
 
 # configs/XMLs.yml, found relative to this repo (was hardcoded to one lab PC)
@@ -25,6 +25,7 @@ class FrameRangeDialog(QDialog):
         super(FrameRangeDialog, self).__init__(*args, **kwargs)
         self.xml_dir = xml_dir
         self.initial = {}
+        self.versions = {}
 
         self.ui = Ui_Dialog()
         self.ui.setupUi(self)
@@ -43,17 +44,17 @@ class FrameRangeDialog(QDialog):
         # Show the values that are in the files now (the original showed defaults).
         for sf, ef, channel in zip(self.sfs, self.efs, [488, 561, 647, 750]):
             path = self.xmlPath(channel)
-            if os.path.exists(path):
+            try:
+                self.versions[path] = fingerprint(path)
                 root = read_settings(path).getroot()
-                for child in root:
-                    if child.tag == "start_frame":
-                        sf.setValue(int(float(child.text)))
-                    if child.tag == "max_frame":
-                        ef.setValue(int(float(child.text)))
+                sf.setValue(int(root.findtext("start_frame", "0")))
+                ef.setValue(int(root.findtext("max_frame", "0")))
                 self.initial[channel] = (sf.value(), ef.value())
-            else:
-                sf.setEnabled(False); ef.setEnabled(False)
-                sf.setToolTip(f"Not found: {path}"); ef.setToolTip(f"Not found: {path}")
+            except (OSError, ValueError, etree.XMLSyntaxError) as exc:
+                sf.setEnabled(False)
+                ef.setEnabled(False)
+                for box in (sf, ef):
+                    box.setToolTip(f"Cannot read {path}: {exc}")
         if xml_dir:
             self.setWindowTitle("Frame Ranges: " + xml_dir)
 
@@ -77,7 +78,7 @@ class FrameRangeDialog(QDialog):
                 edits.append((self.xmlPath(channel), changes))
                 written.append(str(channel))
         try:
-            save_edits(edits)
+            save_edits(edits, self.versions)
         except (OSError, ValueError, etree.XMLSyntaxError) as exc:
             QMessageBox.warning(self, "Could not save frame ranges", str(exc))
             return [], missing
@@ -85,7 +86,7 @@ class FrameRangeDialog(QDialog):
         msg.setWindowTitle("Frame ranges")
         text = "Frame ranges saved for " + (", ".join(written) or "no channels") + "."
         if missing:
-            text += "\nNo XML file for " + ", ".join(missing) + "."
+            text += "\nMissing or invalid XML for " + ", ".join(missing) + "."
         msg.setText(text)
         msg.exec()
         self.accept()

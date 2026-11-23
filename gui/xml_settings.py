@@ -1,17 +1,23 @@
 """Stage XML edits beside their originals; leave unedited files untouched."""
+import hashlib
 import os
 from pathlib import Path
 import shutil
 import tempfile
 
-from lxml import etree
+from analysis_scripts.pipeline_utils import read_fit_xml
 
 
 def read_settings(path):
-    return etree.parse(str(path), etree.XMLParser(resolve_entities=False, no_network=True))
+    return read_fit_xml(path)
 
 
-def save_edits(edits):
+def fingerprint(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def save_edits(edits, expected_versions=None):
+    expected_versions = expected_versions or {}
     staged = []
     targets = set()
     applied = []
@@ -21,6 +27,8 @@ def save_edits(edits):
             if path in targets:
                 raise ValueError(f"More than one edit targets {path}. Select each XML only once.")
             targets.add(path)
+            if filename in expected_versions and fingerprint(path) != expected_versions[filename]:
+                raise ValueError(f"{filename} changed since it was opened. Close and reload the editor.")
             tree = read_settings(path)
             for key, text in changes.items():
                 node = tree.find(key)

@@ -105,6 +105,12 @@ def test_load_localizations_overlay(app, fitted_hdf5):
     w.handleDragDrop(fitted_hdf5)
     w.displayFrame(True)
     app.processEvents()
-    assert w.locs1_list is not None
+    assert w.locs1_list is not None and w.locs1_list.mol_items
+    w.updateInfo(1, 1)
+    w.ui.frame_spin_box.setValue(2)
+    assert not w.locs1_list.mol_items
+    w.updateInfo(1, 1)  # immediate click before the deferred redraw
+    w.displayFrame(True)
+    w.updateInfo(1, 1)
     w.grab().save(os.path.join(OUT, "locs_overlay.png"))
     w.close()

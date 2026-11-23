@@ -201,11 +201,75 @@ def test_batch_finds_alternate_movie_names_and_reports_missing_channels(tmp_path
     for suffix in (".dax", ".inf"):
         (acquisition / f"647storm_00{suffix}").rename(acquisition / f"647_00{suffix}")
     seen = []
+    original_run = batch.run_jobs
     def track_jobs(cmds, workers, log, cancel, label):
         seen.extend(cmds)
+        return original_run(cmds, workers, log, cancel, label)
     monkeypatch.setattr(batch, "run_jobs", track_jobs)
     with pytest.raises(pu.PipelineError, match="selected channel 750"):
         batch.batch_fitting(str(tmp_path), 1, ["647", "750"], log=quiet([]))
     assert not seen
     batch.batch_fitting(str(tmp_path), 1, ["647"], log=quiet([]))
     assert any(str(acquisition / "647_00.dax") in cmd for cmd in seen)
+
+
+def test_movie_discovery_treats_folder_literally_and_rejects_ambiguous_index(tmp_path):
+    directory = tmp_path / "sample [1]"
+    directory.mkdir()
+    for name in ("647_00.dax", "647dark_00.dax", "647storm_03.dax"):
+        (directory / name).touch()
+    assert find_test_movies(directory, "647", 0) == [str(directory / "647_00.dax")]
+    assert len(find_test_movies(directory, "647", -1)) == 2
+    (directory / "647storm_00.dax").touch()
+    with pytest.raises(pu.PipelineError, match="Ambiguous index 0"):
+        find_test_movies(directory, "647", 0)
+
+
+def test_invalid_start_halts_test_and_batch_before_launch(tmp_path, monkeypatch):
+    from analysis_scripts import fitting_parameters_evaluation as testfit, scmos_batch_fitting as batch
+    mte.make(str(tmp_path), small=True)
+    xml = tmp_path / "XMLs" / "647.xml"
+    xml.write_bytes(xml.read_bytes().replace(b'>0</start_frame>', b'>105</start_frame>'))
+    def no_launch(*args, **kwargs):
+        pytest.fail("Fitter should not launch for an invalid range")
+    for module in (testfit, batch):
+        monkeypatch.setattr(module, "run_jobs", no_launch)
+    with pytest.raises(pu.PipelineError, match="Invalid frame range"):
+        testfit.fitting_params(str(tmp_path), 1, ["647"], 0)
+    with pytest.raises(pu.PipelineError, match="Invalid frame range"):
+        batch.batch_fitting(str(tmp_path), 1, ["647"])
+
+
+def test_unfinished_test_fit_does_not_publish(tmp_path, monkeypatch):
+    from pathlib import Path
+    from analysis_scripts import fitting_parameters_evaluation as testfit
+    mte.make(str(tmp_path), small=True)
+    root = tmp_path / "acquisition" / "test_fits"
+    old = root / "run-old"
+    old.mkdir(parents=True)
+    saved = old / "previous.hdf5"
+    saved.write_bytes(b"previous result")
+    def unfinished(cmds, *args, **kwargs):
+        command = cmds[0]
+        with saH5Py.SAH5Py(command[command.index("--bin") + 1], is_existing=False) as writer:
+            writer.setMovieInformation(256, 256, 105, "fixture")
+    monkeypatch.setattr(testfit, "run_jobs", unfinished)
+    with pytest.raises(pu.PipelineError, match="Incomplete fit"):
+        testfit.fitting_params(str(tmp_path), 1, ["647"], 0)
+    assert list(root.iterdir()) == [old]
+    assert saved.read_bytes() == b"previous result"
+
+
+def test_accuracy_counts_empty_frames_and_duplicate_peaks(tmp_path):
+    import numpy as np
+    fit, truth = [str(tmp_path / n) for n in ("fit.hdf5", "truth.hdf5")]
+    with saH5Py.SAH5Py(truth, is_existing=False) as f:
+        f.setMovieInformation(10, 10, 1, "truth")
+        f.addLocalizations({"x": np.array([2.0]), "y": np.array([2.0])}, 0)
+    with saH5Py.SAH5Py(fit, is_existing=False) as f:
+        f.setMovieInformation(10, 10, 2, "fit")
+        f.addLocalizations({"x": np.array([2.0, 2.1]), "y": np.array([2.0, 2.1])}, 0)
+    result = accuracy.compare(fit, truth)
+    assert result["frames"] == 2
+    assert result["recall"] == 0.5
+    assert result["false_positives"] == 1

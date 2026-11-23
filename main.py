@@ -140,10 +140,11 @@ class MoleculeList(object):
     def clearLocs(self):
         self.last_index = 0
         self.locs = {}
+        self.mol_items = []
 
     def createMolItems(self, frame_number, nm_per_pixel):
+        self.clearLocs()
         self.locs = self.loadLocalizations(frame_number, nm_per_pixel)
-        self.mol_items = []
         if bool(self.locs):
             if "xsigma" in self.locs:
                 xs = self.locs["xsigma"]
@@ -243,6 +244,7 @@ class MoleculeListI3(MoleculeList):
                        "xsigma",
                        "ysigma"]
 
+        self.filename = filename
         self.reader = readinsight3.I3Reader(filename)
 
         self.n_locs = self.reader.getNumberMolecules()
@@ -611,21 +613,20 @@ class Window(QtWidgets.QMainWindow):
 
         def fit(log, cancel):
             return fitting_func.fitting_params(experiment_folder, n, channels, movie_idx,
-                                               log=log, cancel_event=cancel)
+                                               log=log, cancel_event=cancel, return_records=True)
         self.startJob("Test fit", [("Test fit", fit)], on_success=self._showTestFitResult)
 
     def _showTestFitResult(self, results):
         outputs = results.get("Test fit") or []
         if not outputs:
             return
-        h5 = outputs[0]
-        movie = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(h5))),
-                             os.path.basename(h5).replace("_mlist.hdf5", ".dax"))
-        if os.path.exists(movie):
-            self.loadMovieFile(movie)
-            self.loadLocalizations(h5, 1)
-        self.statusBar().showMessage(f"Test fit done: {len(outputs)} movie(s). Showing "
-                                     f"{os.path.basename(h5)}.", 15000)
+        record = outputs[0]
+        movie, h5, start = record["movie"], record["output"], record["start"]
+        if self.loadMovieFile(movie, first_frame=start) and self.loadLocalizations(h5, 1):
+            message = f"Showing {os.path.basename(movie)} at frame {start + 1}."
+        else:
+            message = f"Could not open the preview. Results saved to {os.path.dirname(h5)}."
+        self.statusBar().showMessage(f"Test fit saved: {len(outputs)} movie(s). {message}", 15000)
 
     def runAnalysis(self):
         """Run batch fitting only. Legacy alignment is not ready for use."""
@@ -656,6 +657,11 @@ class Window(QtWidgets.QMainWindow):
             self.setExperimentFolder(exp_folder)
 
     def setExperimentFolder(self, folder):
+        editor = getattr(self, "input_parameters_dlg", None)
+        if editor is not None:
+            editor.close()
+            editor.deleteLater()
+            self.input_parameters_dlg = None
         self.ui.exp_lbl.setText(folder)
         self.ui.exp_lbl.setVisible(True)
         missing = [d for d in ("acquisition", "XMLs") if not os.path.isdir(os.path.join(folder, d))]
@@ -673,6 +679,13 @@ class Window(QtWidgets.QMainWindow):
             return
         # Keep a reference on the window. As a local variable the dialog was
         # garbage collected as soon as this method returned, so it closed instantly.
+        editor = getattr(self, "input_parameters_dlg", None)
+        if editor is not None:
+            if editor.isVisible():
+                editor.raise_()
+                editor.activateWindow()
+                return
+            editor.deleteLater()
         self.input_parameters_dlg = AdvancedSettingsDialog(self, xml_dir=self.experimentXmlDir())
         self.input_parameters_dlg.show()
 
@@ -767,6 +780,9 @@ class Window(QtWidgets.QMainWindow):
             self.statusBar().showMessage("Saved " + name, 10000)
 
     def cleanUp(self):
+        if self.movie_file is not None:
+            self.movie_file.close()
+            self.movie_file = None
         for elt in [self.locs1_list, self.locs2_list]:
             if elt is not None:
                 elt.cleanUp()
@@ -796,18 +812,27 @@ class Window(QtWidgets.QMainWindow):
                 self.cur_frame = self.film_l - 1
 
             # Get the current frame.
-            frame = self.movie_file.loadAFrame(self.cur_frame).astype(float)
+            try:
+                frame = self.movie_file.loadAFrame(self.cur_frame).astype(float)
+            except Exception as exc:
+                self.showError("Could not read movie frame", f"{self.ui.mov_path_lbl.text()}: {exc}")
+                return
 
-            # Create localization list 1 molecule items.
+            # Scene.clear() deletes older Qt items. Never leave hit-testing pointed at them.
             nm_per_pixel = self.ui.nmPerPixelSpinBox.value()
-            locs1 = []
-            if update_locs and (self.locs1_list is not None):
-                locs1 = self.locs1_list.createMolItems(self.cur_frame, nm_per_pixel)
-
-            # Create localization list 2 molecule items.
-            locs2 = []
-            if update_locs and (self.locs2_list is not None):
-                locs2 = self.locs2_list.createMolItems(self.cur_frame, nm_per_pixel)
+            overlays = []
+            for locs in (self.locs1_list, self.locs2_list):
+                if locs is None:
+                    overlays.append([])
+                    continue
+                locs.clearLocs()
+                try:
+                    overlays.append(locs.createMolItems(self.cur_frame, nm_per_pixel) if update_locs else [])
+                except Exception as exc:
+                    locs.clearLocs()
+                    overlays.append([])
+                    self.showError("Could not read localizations", f"{locs.filename}: {exc}")
+            locs1, locs2 = overlays
 
             self.movie_view.newFrame(frame,
                                      locs1,
@@ -816,21 +841,35 @@ class Window(QtWidgets.QMainWindow):
                                      self.ui.maxSpinBox.value())
                                      
     def handleDragDrop(self, file):
-        if file.endswith(('bin', 'hdf5')):
+        if file.lower().endswith(('.bin', '.hdf5')):
             self.loadLocalizations(file, 1)
-        elif file.endswith(('dax', 'spe', 'tif', 'fits')):
+        elif file.lower().endswith(('.dax', '.spe', '.tif', '.tiff', '.fits')):
             self.loadMovieFile(file)
 
     def loadLocalizations(self, list_filename, which):
         old = self.locs1_list if which == 1 else self.locs2_list
+        new = None
+        try:
+            mtype = "l1" if which == 1 else "l2"
+            if list_filename.lower().endswith(".hdf5"):
+                if not saH5Py.isSAHDF5(list_filename):
+                    raise ValueError("not a storm-analysis HDF5 file")
+                new = MoleculeListHDF5(filename=list_filename, mtype=mtype)
+                with saH5Py.SAH5Reader(list_filename) as reader:
+                    reader.getMovieLength()
+            else:
+                if not readinsight3.checkStatus(list_filename):
+                    raise ValueError("invalid Insight3 file")
+                new = MoleculeListI3(filename=list_filename, mtype=mtype)
+            new.createMolItems(max(0, self.cur_frame), self.ui.nmPerPixelSpinBox.value())
+        except Exception as exc:
+            if new is not None:
+                new.cleanUp()
+            self.showError("Could not open localizations", f"{list_filename}: {exc}")
+            return False
         if old is not None:
             old.cleanUp()
         self.directory = os.path.dirname(list_filename)
-        mtype = "l1" if which == 1 else "l2"
-        if saH5Py.isSAHDF5(list_filename):
-            new = MoleculeListHDF5(filename = list_filename, mtype = mtype)
-        else:
-            new = MoleculeListI3(filename = list_filename, mtype = mtype)
         if which == 1:
             self.locs1_list = new
             self.locs1_table.showFields(new.getFields())
@@ -838,14 +877,33 @@ class Window(QtWidgets.QMainWindow):
             self.locs2_list = new
             self.locs2_table.showFields(new.getFields())
         self.incCurFrame(0)
+        return True
 
-    def loadMovieFile(self, movie_filename):
+    def loadMovieFile(self, movie_filename, first_frame=0):
         """Shared by Load Movie, drag and drop, and the test fit result. (Drag and
         drop used to skip the label updates, so the frame count stayed wrong.)"""
+        reader = None
+        try:
+            reader = datareader.inferReader(movie_filename)
+            width, height, length = reader.filmSize()
+            if width <= 0 or height <= 0 or not 0 <= first_frame < length:
+                raise ValueError("invalid movie dimensions or frame range")
+            for n in {0, first_frame, length - 1}:
+                frame = reader.loadAFrame(n)
+                if frame.shape != (height, width) or not np.isfinite(frame).any():
+                    raise ValueError(f"frame {n + 1} has invalid image data")
+        except Exception as exc:
+            if reader is not None:
+                reader.close()
+            self.showError("Could not open movie", f"{movie_filename}: {exc}")
+            return False
+        previous = self.movie_file
+        self.movie_file = reader
+        if previous is not None:
+            previous.close()
         self.directory = os.path.dirname(movie_filename)
-        self.movie_file = datareader.inferReader(movie_filename)
-        [self.film_x, self.film_y, self.film_l] = self.movie_file.filmSize()
-        self.cur_frame = 0
+        self.film_x, self.film_y, self.film_l = width, height, length
+        self.cur_frame = first_frame
 
         # Clear molecule lists.
         for elt in [self.locs1_list, self.locs2_list]:
@@ -862,9 +920,8 @@ class Window(QtWidgets.QMainWindow):
         # used to jump the viewer to the last frame.
         self.ui.frame_spin_box.blockSignals(True)
         self.ui.frame_spin_box.setMaximum(max(1, self.film_l))
-        self.ui.frame_spin_box.setValue(1)
+        self.ui.frame_spin_box.setValue(first_frame + 1)
         self.ui.frame_spin_box.blockSignals(False)
-        self.cur_frame = 0
         self.incCurFrame(0)
         self.ui.mov_path_lbl.setText(movie_filename)
         self.ui.nmPerPixLabel_2.setText("of {}".format(self.film_l))
@@ -872,6 +929,7 @@ class Window(QtWidgets.QMainWindow):
         self.movie_view.resetZoom()
         self.statusBar().showMessage(f"{os.path.basename(movie_filename)}: {self.film_l} frames, "
                                      f"{self.film_x} x {self.film_y} pixels", 10000)
+        return True
 
     def handleLoadLocs1(self):
         list_filename = QtWidgets.QFileDialog.getOpenFileName(self,
@@ -960,7 +1018,7 @@ class Window(QtWidgets.QMainWindow):
         """The slider spanned 0..65535, about 150 counts per pixel, so typical STORM
         data (~100..2000) used the bottom few pixels. Fit it to this movie instead."""
         frame = self.movie_file.loadAFrame(0)
-        top = max(1000, int(np.ceil(np.percentile(frame, 99.99) * 2)),
+        top = max(1000, int(np.ceil(np.percentile(frame[np.isfinite(frame)], 99.99) * 2)),
                   self.ui.maxSpinBox.value())
         top = min(top, self.ui.maxSpinBox.maximum())
         self.rangeSlider.setRange([self.ui.minSpinBox.minimum(), top, 1.0])

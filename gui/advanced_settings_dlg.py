@@ -10,7 +10,7 @@ from functools import partial
 
 import xml.etree.ElementTree as ET
 from lxml import etree
-from .xml_settings import read_settings, save_edits
+from .xml_settings import fingerprint, read_settings, save_edits
 import yaml 
 
 # configs/XMLs.yml, found relative to this repo (was hardcoded to one lab PC)
@@ -90,6 +90,7 @@ class AdvancedSettingsDialog(QDialog):
         if fileName:
             print(fileName)
             try:
+                version = fingerprint(fileName)
                 root = read_settings(fileName).getroot()
                 fields = self.fields(channel)
                 values = {}
@@ -112,7 +113,7 @@ class AdvancedSettingsDialog(QDialog):
                     widget.setChecked(values[name])
                 else:
                     widget.setValue(values[name])
-            self.loaded[channel] = (fileName, self.field_values(channel))
+            self.loaded[channel] = (fileName, self.field_values(channel), version)
 
     def fields(self, i):
         return dict(start_frame=self.sfs[i], max_frame=self.efs[i],
@@ -127,13 +128,15 @@ class AdvancedSettingsDialog(QDialog):
         if not self.isEnabled():
             return
         edits = []
-        for channel, (path, initial) in self.loaded.items():
+        versions = {}
+        for channel, (path, initial, version) in self.loaded.items():
             changes = {key: value for key, value in self.field_values(channel).items()
                        if value != initial.get(key)}
             if changes:
                 edits.append((path, changes))
+                versions[path] = version
         try:
-            save_edits(edits)
+            save_edits(edits, versions)
         except (OSError, ValueError, etree.XMLSyntaxError) as exc:
             QMessageBox.warning(self, "Could not save settings", str(exc))
             return

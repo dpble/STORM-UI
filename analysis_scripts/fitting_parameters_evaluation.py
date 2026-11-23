@@ -16,91 +16,79 @@
 #  - no matching movies raises an error instead of reporting success
 #  - only the movies fitted now are converted to .bin (was every .hdf5 in bins/)
 
-import glob
+from pathlib import Path
 import os
 import re
 import tempfile
 import uuid
 
-import storm_analysis.sa_library.datareader as datareader
 
-try:
-    from analysis_scripts.pipeline_utils import (Cancelled, FitSettingsSnapshot, HDF5_TO_BIN, PYTHON, PipelineError,
-                                                 fit_cmd, run_jobs)
-except ImportError:
-    from pipeline_utils import (Cancelled, FitSettingsSnapshot, HDF5_TO_BIN, PYTHON, PipelineError,
-                                fit_cmd, run_jobs)
+from .pipeline_utils import (FitSettingsSnapshot, HDF5_TO_BIN, PYTHON, PipelineError,
+                             check_cancel, fit_cmd, plan_fit, run_jobs, verify_artifacts, verify_fits, write_manifest)
 
-MINIMUM_LENGTH = 100   # frames; shorter movies are skipped (unchanged from original)
+CHANNELS = {"488", "561", "647", "750"}
 
 
 def find_test_movies(input_directory, channel, movie_idx):
-    """Movies for one channel. movie_idx >= 0 selects the movie whose trailing
-    number equals movie_idx (647storm_03.dax for 3); -1 selects all of them.
-    (The original glob "*3.dax" also matched 647storm_13.dax, 647storm_23.dax, ...)"""
-    movies = sorted(glob.glob(os.path.join(input_directory, f"{channel}*.dax")))
-    if movie_idx is None or movie_idx < 0:
-        return movies
-    pat = re.compile(r"(\d+)\.dax$")
-    return [m for m in movies if pat.search(m) and int(pat.search(m).group(1)) == int(movie_idx)]
+    """Accept CHANNEL_INDEX and CHANNELstorm_INDEX, with optional numbered section fields."""
+    if str(channel) not in CHANNELS:
+        raise PipelineError(f"Unknown STORM channel: {channel}")
+    pattern = re.compile(rf"{channel}(?:storm_|_)([0-9]+(?:_[0-9]+)*)\.dax")
+    movies = []
+    for path in sorted(Path(input_directory).iterdir()):
+        match = pattern.fullmatch(path.name)
+        if match and path.is_file():
+            if movie_idx is None or movie_idx < 0 or int(match[1].rsplit("_", 1)[-1]) == movie_idx:
+                movies.append(str(path))
+    if movie_idx is not None and movie_idx >= 0 and len(movies) > 1:
+        raise PipelineError(f"Ambiguous index {movie_idx} for channel {channel}: " +
+                            ", ".join(Path(movie).name for movie in movies))
+    return movies
 
 
 def fitting_params(expfolder, max_processes, selected_channels, movie_idx,
-                   debug=False, log=print, cancel_event=None):
-    """Returns the list of fitted .hdf5 files."""
-    expfolder = os.path.normpath(expfolder)
-    xml_folder = os.path.join(expfolder, "XMLs")
-    input_directory = os.path.join(expfolder, "acquisition")
-    bin_folder = os.path.join(input_directory, "test_fits")
-
-    if not os.path.isdir(input_directory):
-        raise PipelineError(f"No acquisition folder in {expfolder}")
-    os.makedirs(bin_folder, exist_ok=True)
-
-    cmd_lines, outputs = [], []
-    for channel in selected_channels:
-        base = str(channel)
-        xml = os.path.join(xml_folder, base + ".xml")
-        if not os.path.isfile(xml):
-            raise PipelineError(f"Missing parameters file {xml}")
-        movies = find_test_movies(input_directory, base, movie_idx)
-        if not movies:
-            log(f"{base}: no movie matches index {movie_idx}")
-        for movie_file in movies:
-            n_frames = datareader.inferReader(movie_file).filmSize()[2]
-            if n_frames <= MINIMUM_LENGTH:
-                log(f"Skipping {os.path.basename(movie_file)}: {n_frames} frames (needs > {MINIMUM_LENGTH})")
-                continue
-            mlist = os.path.join(bin_folder, os.path.basename(movie_file)[:-4] + "_mlist.hdf5")
-            log(f"Analyzing {os.path.basename(movie_file)} with {os.path.basename(xml)}")
-            cmd_lines.append(fit_cmd(movie_file, mlist, xml))
-            outputs.append(mlist)
-
-    if not cmd_lines:
-        raise PipelineError("No movies to fit. Check the channels, the movie index, and that "
-                            f"movies are named like 647storm_00.dax in {input_directory}")
-
-    # Keep test fits separate from batch results. Only publish new files after
-    # every fit and conversion completes, so a failed or cancelled run keeps
-    # the previous results intact.
-    with tempfile.TemporaryDirectory(prefix=".staging-", dir=bin_folder) as staging:
-        stage = os.path.join(staging, "results")
-        os.mkdir(stage)
-        staged = [os.path.join(stage, os.path.basename(o)) for o in outputs]
-        snapshots = FitSettingsSnapshot(os.path.join(stage, "settings"))
-        for cmd, path in zip(cmd_lines, staged):
-            cmd[-1] = snapshots.copy(cmd[-1])
-            cmd[cmd.index("--bin") + 1] = path
-        run_jobs(cmd_lines, max_processes, log, cancel_event, label="fit")
-        conv = [[PYTHON, HDF5_TO_BIN, "--hdf5", h5, "--bin", h5[:-5] + ".bin"] for h5 in staged]
+                   debug=False, log=print, cancel_event=None, return_records=False):
+    """Run and publish a complete Test Fit. Optionally return exact viewer records."""
+    experiment = Path(os.path.abspath(expfolder))
+    acquisition = experiment / "acquisition"
+    if not acquisition.is_dir():
+        raise PipelineError(f"No acquisition folder in {experiment}")
+    root = acquisition / "test_fits"
+    root.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".staging-", dir=root) as staging:
+        stage = Path(staging) / "results"
+        stage.mkdir()
+        snapshots = FitSettingsSnapshot(stage / "settings", cancel_event)
+        records = []
+        for channel in dict.fromkeys(str(c) for c in selected_channels):
+            check_cancel(cancel_event)
+            movies = find_test_movies(acquisition, channel, movie_idx)
+            if not movies:
+                raise PipelineError(f"No movies to fit for channel {channel} at index {movie_idx}")
+            xml = experiment / "XMLs" / f"{channel}.xml"
+            settings = snapshots.copy(xml)
+            for movie in movies:
+                output = stage / f"{Path(movie).stem}_mlist.hdf5"
+                log(f"Analyzing {Path(movie).name} with {xml.name}")
+                records.append(plan_fit(movie, output, settings, log, cancel_event))
+        if not records:
+            raise PipelineError("No movies to fit")
+        commands = [fit_cmd(r["movie"], r["output"], r["xml"]) for r in records]
+        run_jobs(commands, max_processes, log, cancel_event, label="fit")
+        verify_fits(records, cancel_event)
+        outputs = [r["output"] for r in records]
+        conv = [[PYTHON, HDF5_TO_BIN, "--hdf5", h5, "--bin", h5[:-5] + ".bin"] for h5 in outputs]
         run_jobs(conv, max_processes, log, cancel_event, label="conversion")
-        if cancel_event is not None and cancel_event.is_set():
-            raise Cancelled("Cancelled before publishing test fit")
-        final = os.path.join(bin_folder, f"run-{uuid.uuid4().hex}")
-        os.rename(stage, final)
-        outputs = [os.path.join(final, os.path.basename(path)) for path in staged]
-    log(f"Done: {len(outputs)} movie(s) fitted.")
-    return outputs
+        verify_artifacts([cmd[-1] for cmd in conv])
+        write_manifest(stage, records)
+        check_cancel(cancel_event)
+        final = root / f"run-{uuid.uuid4().hex}"
+        stage.rename(final)
+        for record in records:
+            for key in ("output", "xml"):
+                record[key] = str(final / Path(record[key]).relative_to(stage))
+    log(f"Done: {len(records)} movie(s) fitted. Results published to {final}.")
+    return records if return_records else [r["output"] for r in records]
 
 
 if __name__ == "__main__":

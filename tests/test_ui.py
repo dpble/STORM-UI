@@ -256,3 +256,26 @@ def test_drag_pans_when_zoomed(win, app, exp):
     mouse(vp, T.MouseButtonRelease, (c.x() - 120, c.y()))
     app.processEvents()
     assert hbar.value() != before
+
+
+def test_bad_input_keeps_existing_view_and_reuses_open_editor(win, app, exp, tmp_path):
+    from pathlib import Path
+    movie = str(Path(exp) / "acquisition" / "647storm_00.dax")
+    assert win.loadMovieFile(movie)
+    reader = win.movie_file
+    broken = tmp_path / "corrupt.dax"
+    broken.write_bytes(b"broken")
+    assert not win.loadMovieFile(str(broken))
+    assert win.movie_file is reader
+    bad_overlay = tmp_path / "bad.hdf5"
+    bad_overlay.write_bytes(b"broken")
+    assert not win.loadLocalizations(str(bad_overlay), 1)
+    assert win.movie_file is reader and win.locs1_list is None
+    close_message_boxes()
+    win.setExperimentFolder(exp)
+    win.open_input_parameters_dlg()
+    editor = win.input_parameters_dlg
+    win.open_input_parameters_dlg()
+    assert win.input_parameters_dlg is editor
+    win.setExperimentFolder(str(tmp_path))
+    assert win.input_parameters_dlg is None
