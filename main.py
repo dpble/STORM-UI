@@ -887,7 +887,7 @@ class Window(QtWidgets.QMainWindow):
         self.ui.proc_slider.setValue(self.ui.proc_spin_box.value())
         
     def handleFrameSpinBox(self):
-        self.cur_frame = int(self.ui.frame_spin_box.value())
+        self.cur_frame = int(self.ui.frame_spin_box.value()) - 1  # box is 1-indexed, cur_frame is 0-indexed
         self.displayFrame(False)
         self.locs_display_timer.start()
 
