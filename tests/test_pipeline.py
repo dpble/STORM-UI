@@ -49,7 +49,7 @@ def test_test_fit_accuracy_vs_ground_truth(exp):
     assert r["false_positives"] < 0.01 * r["fitted"]
     assert r["median_error_nm"] < 10.0
     # converted .bin written too
-    assert os.path.exists(os.path.join(exp, "acquisition", "real_bins", "647storm_00_mlist.bin"))
+    assert os.path.exists(os.path.join(exp, "acquisition", "test_fits", "647storm_00_mlist.bin"))
 
 
 def test_test_fit_rerun_uses_new_parameters(exp, tmp_path):
@@ -66,7 +66,6 @@ def test_test_fit_rerun_uses_new_parameters(exp, tmp_path):
         after = n_locs(fitting_params(exp, 2, ["750"], 1, log=quiet(logs))[0])
     finally:
         open(xml, "w", encoding="latin-1").write(original)
-    assert any("Removed previous result" in l for l in logs)
     assert before > 1000 and after < before * 0.05, (before, after)
 
 

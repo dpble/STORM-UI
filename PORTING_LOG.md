@@ -55,7 +55,7 @@ Also needed `image_registration` (Adam Ginsburg's package, used by py_dftregistr
 1. Are `cproc.py`, `reorder.py`, and `Name_Correction.py` on the lab computer? Z-alignment imports the first two.
 2. z_alignment.py calls `fiji_z_align1_488wga.py`, `fiji_z_align2_488wga.py`, `fiji_z_align3_488wga.py`, but `macros/` only has the `_FullChannel` versions of the 488 scripts and no `fiji_z_align3_488wga.py`. Are the others somewhere?
 3. Fiji path is hardcoded to `C:/Users/Colenso/Fiji.app/ImageJ-win64` with `-Xms50g -Xmx50g`. Is the lab analysis PC still Windows with 64+ GB RAM? (Plan: move path and memory into configs/.)
-4. MATLAB: Samarth's understanding is it is still part of the workflow, now called from the code. Which .m steps run today (gen_bead_warp_hcam, test_bead_warp_hcam, wga_norm_and_thresh)? Note `image_chrom_align_hcam.py` is MATLAB code saved as .py and is not imported anywhere.
+4. MATLAB: the MATLAB calls in batch fitting are commented out, and `gen_bead_warp_hcam.py` / `wga_norm_and_thresh.py` look like Python ports of the .m files. Is any MATLAB still run today? Is the bead warp (gen_bead_warp_and_chrom_align) the step that replaced it? (`image_chrom_align_hcam.py` is MATLAB code saved as .py and is not imported anywhere.)
 5. Paths are built with `"\\"` in several scripts (Windows-only). OK to switch to `os.path.join` so it runs on Mac/Linux too?
 
 6. The `gui/ui/*.ui` Designer files are older than the `gui/*_ui.py` files the app runs (frame box maximums, colors, a removed label). OK to update the .ui files to match, so future Designer edits do not undo those changes?
@@ -93,8 +93,73 @@ Status: **app runs on PyQt6 6.12.1 with PyQt5 uninstalled. 11 of 11 tests pass**
 
 Mouse move/press/release on the movie, wheel zoom, contrast slider drag, drop path on this OS, Set Test Parameters stays open, Frame Range dialog opens, all 3 dialogs build.
 
+Correction (Phase B): the Phase 2 slider test pressed in the middle of the slider, so it never moved a handle and could not catch the slider crash found later. It now drags the min handle and checks the value changed.
+
+7. "Delete existing files?" in Run Analysis never deleted anything (the code was commented out). It is now "Existing results found: Continue or Cancel" and nothing is deleted. Should it ever delete old results, or is resume-and-keep right?
+8. XY and Z alignment need conventional images (`Conv_*.dax`), flat-field images (`FFC_*.dax`), bead movies and Fiji. Could the test data set include one small experiment with all of these, so alignment can be ported and tested?
+
+## Phase A: make the pipeline work (2026-11-23)
+
+### Simulated experiment with known answers
+`tools/make_test_experiment.py` writes movies in the lab layout (`acquisition/647storm_00.dax`, `Regbead_000_00.dax`, `XMLs/`) using the lab's XMLs and sCMOS calibration, with known emitter positions. `tools/accuracy.py` matches fits to the truth.
+
+| Run | Recall | False positives | Median error |
+|-----|--------|-----------------|--------------|
+| 647, full 896x896 lab calibration, frames 0-50 | 98.5% | 1 of 3256 | 5.0 nm |
+| 647, 256x256 crop (CI size) | 98.4% | 3 of 3155 | 4.8 nm |
+| 750, 256x256 crop, all 105 frames | 98.6% | 0 of 6314 | 5.2 nm |
+
+3000 photons, 155 nm pixels, sigma 1.12 px, 20 photons/px background. The theoretical best precision for these settings is roughly 3 to 5 nm, so ~5 nm is in range, not suspiciously good.
+
+### Bugs fixed in Test Fit and batch fitting
+
+| File | Problem | Fix |
+|------|---------|-----|
+| fitting_parameters_evaluation.py | Windows `"\\"` paths, `C:/Program Files/Python36/...` script paths, bare `python` | `os.path.join`, scripts from the installed storm_analysis, `sys.executable` |
+| fitting_parameters_evaluation.py | Movie index -1 ("all movies") matched nothing: glob had a literal `{}` | Fixed |
+| fitting_parameters_evaluation.py | Index 1 also matched movies 11, 21, ... | Match the exact trailing number |
+| fitting_parameters_evaluation.py | **Re-running Test Fit kept the old result.** storm-analysis resumes an existing output file. Measured: threshold raised to 100000, re-run still reported 7035 localizations (fixed: 0) | Stage a fresh result under `acquisition/test_fits/`; leave batch outputs and previous test results intact on failed fits |
+| fitting_parameters_evaluation.py | "Already fitted" check looked for `.bin` files that are never written to `bins/` | Removed |
+| scmos_batch_fitting.py | Command list built outside the channel loop, run inside it: earlier channels relaunched for every later channel | One batch, each movie once (tested) |
+| both | storm-analysis `batchRun` ignores exit codes: a crashed fit looked like success | `pipeline_utils.run_jobs` checks exit codes, supports cancel |
+| XY_alignment.py (not fixed) | On Mac the `"\\"` paths create folders literally named `exp\acquisition\distcorr\` | Waiting for real data, see question 8 |
+
+## Phase B: UI (2026-11-23)
+
+- Jobs run in a background thread: progress bar, live log, Cancel. The window used to freeze for the whole run.
+- Test Fit opens the fitted movie with its localizations.
+- Layout: viewer out of the floating MDI subwindow; left panel in numbered steps; tooltips on every control; Help menu; status bar.
+- Shift+drag box: zoom to it and set contrast from it. Auto Contrast (A), Reset Zoom (R).
+- Dialogs edit the experiment's `XMLs/` (what Test Fit reads), not the placeholder paths in `configs/XMLs.yml`.
+
+### More bugs found while building the UI
+
+| Where | Problem | Fix |
+|------|---------|-----|
+| main.py handleRangeChange | **Dragging the contrast slider crashed the app under PyQt6** (float into QSpinBox.setValue; PyQt5 rounded silently) | `int(round())` |
+| gui/qtRangeSlider.py | Dragging min past max moved the handle but not the value: min > max (original) | Keep them ordered |
+| main.py | Contrast slider spanned 0-65535, ~150 counts per pixel; typical data used the bottom few pixels | Range fitted to the loaded movie |
+| main.py MovieView.mouseMoveEvent | **Drag-to-pan never worked**: base class never called. Confirmed on the original PyQt5 code | Call the base class |
+| main.py | Opening a movie jumped to the last frame (spin box max clamp fired valueChanged) | Block signals while resetting |
+| gui/advanced_settings_dlg.py | Loading an XML passed floats to integer frame boxes: crash under PyQt6 | `int(float())` |
+| gui/advanced_settings_dlg.py, frame_range_dlg.py | Edited `configs/XMLs.yml` placeholder paths, not the experiment's XMLs | Use the experiment's `XMLs/` |
+| gui/frame_range_dlg.py | Stopped at the first missing channel after writing earlier ones; showed defaults, not file values | Write all present, report missing; prefill |
+| main.py open_frame_range_dlg | `show()` after `exec()`: dialog reopened after OK/Cancel | Removed |
+| main.py | "Delete existing files?" deleted nothing | Honest Continue/Cancel prompt |
+| main.py | Error dialogs had their heading only in the title, which macOS hides | Heading in the text |
+| main.py | Parallel jobs defaulted to 0; frame box showed "1.00"; capture.png saved to the launch folder; closing during a job | Fixed |
+| tests | Tests wrote into the real user's settings (contrast, folder, window position) | Settings redirected to a temp folder in tests |
+
+## Phase C: testing
+
+- **41 tests** (`pytest tests`, about a minute): smoke, interaction, pipeline accuracy, UI jobs/cancel/errors, dialogs.
+- Every bug fix that could be tested has a test; the Test Fit re-run test was checked to fail with the fix turned off.
+- Real macOS window (Cocoa, Retina) checked by screenshot.
+- A Linux/macOS/Windows workflow is prepared locally; upload is blocked by missing `workflow` scope.
+- `MANUAL_TEST.md`: 10 minute hands-on checklist.
+
 ## Still to do
 
-- Replace bare imports with package imports so run_dev.sh is no longer needed.
-- Move the remaining hardcoded paths into configs/ (about 25 in analysis_scripts: Fiji, `C:/Program Files/Python36/.../storm_analysis/...`, test folders). These block the fitting and alignment buttons on any PC but the original one. Phase 3.
-- Smaller GUI issues: drag-and-drop does not update the "of N" frame count; frame box shows decimals ("1.00"); "MS Shell Dlg 2" font is Windows-only.
+- XY and Z alignment (question 8), Fiji path and memory into configs/.
+- Replace bare imports with package imports (tests no longer need run_dev.sh; the app still does).
+- Sync the `.ui` files (question 6). "MS Shell Dlg 2" font warning from the dialog .ui stylesheets.

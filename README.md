@@ -1,3 +1,45 @@
+# STORMpro (STORM-UI), 2026 update
+
+This branch ports STORMpro to **Python 3.12 and PyQt6** and makes it run on
+Windows, macOS and Linux. The original README (2021) follows below; its
+instructions for Fiji, macros and XML paths still apply to XY/Z alignment.
+
+## Install
+
+1. storm-analysis (not on PyPI):
+   - **Windows:** `pip install https://github.com/ZhuangLab/storm-analysis/releases/download/v2.4.1/storm_analysis-2.4.1-py3-none-win_amd64.whl`
+   - **macOS:** `brew install fftw lapack`, then
+     `git clone https://github.com/ZhuangLab/storm-analysis ../storm-analysis` and `pip install -e ../storm-analysis`
+   - **Linux:** `sudo apt install libfftw3-dev liblapack-dev`, then the same clone + `pip install -e`.
+2. `pip install -r requirements.txt`
+3. Run: `./run_dev.sh main.py` (macOS/Linux). On Windows, set PYTHONPATH as in
+   `run_dev.sh` (repo, `analysis_scripts`, storm_analysis and its `sa_library`), then `python main.py`.
+
+## Using it
+
+Open **Help** in the app for the quick start and viewer controls. In short:
+choose the experiment folder (with `acquisition/` and `XMLs/`), tick channels,
+**Run Test Fit** on one movie to check the XML parameters (the result opens in
+the viewer), then **Run Full Analysis**. Jobs run in the background with a
+progress bar, a log and Cancel. Test Fit stores results separately in `acquisition/test_fits/`. Cancel stops fitting; during legacy alignment it takes effect at the next stage boundary.
+
+## Tests
+
+`pytest tests` runs everything (about a minute). The pipeline tests use a
+simulated experiment with known molecule positions, built with the lab's XMLs
+and sCMOS calibration (`tools/make_test_experiment.py`), and check fit accuracy
+against ground truth (`tools/accuracy.py`). `MANUAL_TEST.md` is a 10 minute
+hands-on checklist. `PORTING_LOG.md` lists every change and bug fix.
+
+## Status
+
+| Step | Status |
+|------|--------|
+| Viewer, Test Fit, batch fitting (STORM + beads), .bin and .tiff output | Working, tested on macOS. Linux and Windows CI is pending workflow upload |
+| XY and Z alignment | Not yet ported: needs real conventional/bead images and Fiji. See PORTING_LOG.md |
+
+---
+
 # STORM_GUI  -- "STORMpro.py"
 
 

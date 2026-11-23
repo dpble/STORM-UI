@@ -86,7 +86,7 @@ def test_changed_threshold_is_used_by_test_fit(win, app, exp):
         t0 = time.time()
         while win.isBusy() and time.time() - t0 < 120:
             app.processEvents(); time.sleep(0.02)
-        h5 = os.path.join(exp, "acquisition", "bins", "647storm_00_mlist.hdf5")
+        h5 = os.path.join(exp, "acquisition", "test_fits", "647storm_00_mlist.hdf5")
         with saH5Py.SAH5Reader(h5) as f:
             return f.getNLocalizations()
 
@@ -100,7 +100,7 @@ def test_changed_threshold_is_used_by_test_fit(win, app, exp):
     assert xml_value(xml, "max_frame") == "20"
     assert float(xml_value(xml, "threshold")) == 30.0
     after = run_fit()
-    h5 = os.path.join(exp, "acquisition", "bins", "647storm_00_mlist.hdf5")
+    h5 = os.path.join(exp, "acquisition", "test_fits", "647storm_00_mlist.hdf5")
     with saH5Py.SAH5Reader(h5) as f:
         frames = sorted({fn for fn, locs in f.localizationsIterator(fields=["x"]) if locs["x"].size})
     assert frames[-1] < 20, frames[-1]              # the new frame range was used

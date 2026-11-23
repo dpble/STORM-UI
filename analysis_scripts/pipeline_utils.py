@@ -85,18 +85,12 @@ def run_jobs(cmd_lines, max_processes=2, log=print, cancel_event=None, label="jo
         for proc, _, _ in running:
             if proc.poll() is None:
                 proc.kill()
+        for proc, _, thread in running:
+            proc.wait()
+            thread.join(timeout=5)
         raise
 
     if failed:
         raise PipelineError(f"{len(failed)} of {total} {label}s failed:\n" +
                             "\n".join(f"  exit {rc}: {' '.join(cmd)}" for cmd, rc in failed))
     return total
-
-
-def remove_previous_output(path, log=print):
-    """storm-analysis resumes an existing output file instead of refitting, so a
-    re-run with new parameters would silently keep the old result. Remove only
-    this derived output file (never raw data)."""
-    if os.path.exists(path):
-        os.remove(path)
-        log(f"Removed previous result: {os.path.basename(path)}")

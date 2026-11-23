@@ -10,8 +10,8 @@
 #  - movie_idx = -1 ("all movies") matched no files: the glob had a literal "{}"
 #  - the "already fitted" check looked for 647storm_*_mlist.bin in bins/, which is
 #    never written there (fits are .hdf5), so it never skipped; removed
-#  - a previous result for the same movie is removed first; storm-analysis
-#    resumes existing files, so new parameters were silently ignored on re-runs
+#  - stage fresh results separately so re-runs use new parameters, without
+#    touching batch results or losing previous test fits on failure
 #  - failed fits raise an error (batchRun ignored exit codes)
 #  - no matching movies raises an error instead of reporting success
 #  - only the movies fitted now are converted to .bin (was every .hdf5 in bins/)
@@ -19,15 +19,16 @@
 import glob
 import os
 import re
+import tempfile
 
 import storm_analysis.sa_library.datareader as datareader
 
 try:
     from analysis_scripts.pipeline_utils import (HDF5_TO_BIN, PYTHON, PipelineError,
-                                                 fit_cmd, remove_previous_output, run_jobs)
+                                                 fit_cmd, run_jobs)
 except ImportError:
     from pipeline_utils import (HDF5_TO_BIN, PYTHON, PipelineError,
-                                fit_cmd, remove_previous_output, run_jobs)
+                                fit_cmd, run_jobs)
 
 MINIMUM_LENGTH = 100   # frames; shorter movies are skipped (unchanged from original)
 
@@ -49,13 +50,11 @@ def fitting_params(expfolder, max_processes, selected_channels, movie_idx,
     expfolder = os.path.normpath(expfolder)
     xml_folder = os.path.join(expfolder, "XMLs")
     input_directory = os.path.join(expfolder, "acquisition")
-    bin_folder = os.path.join(input_directory, "bins")
-    real_bins = os.path.join(input_directory, "real_bins")
+    bin_folder = os.path.join(input_directory, "test_fits")
 
     if not os.path.isdir(input_directory):
         raise PipelineError(f"No acquisition folder in {expfolder}")
-    for d in (os.path.join(input_directory, "bead_registration"), bin_folder, real_bins):
-        os.makedirs(d, exist_ok=True)
+    os.makedirs(bin_folder, exist_ok=True)
 
     cmd_lines, outputs = [], []
     for channel in selected_channels:
@@ -72,7 +71,6 @@ def fitting_params(expfolder, max_processes, selected_channels, movie_idx,
                 log(f"Skipping {os.path.basename(movie_file)}: {n_frames} frames (needs > {MINIMUM_LENGTH})")
                 continue
             mlist = os.path.join(bin_folder, os.path.basename(movie_file)[:-4] + "_mlist.hdf5")
-            remove_previous_output(mlist, log)
             log(f"Analyzing {os.path.basename(movie_file)} with {os.path.basename(xml)}")
             cmd_lines.append(fit_cmd(movie_file, mlist, xml))
             outputs.append(mlist)
@@ -81,15 +79,19 @@ def fitting_params(expfolder, max_processes, selected_channels, movie_idx,
         raise PipelineError("No movies to fit. Check the channels, the movie index, and that "
                             f"movies are named like 647storm_00.dax in {input_directory}")
 
-    run_jobs(cmd_lines, max_processes, log, cancel_event, label="fit")
-
-    # Convert the new results to Insight3 .bin files (as before, into real_bins/).
-    conv = []
-    for h5 in outputs:
-        out_bin = os.path.join(real_bins, os.path.basename(h5)[:-5] + ".bin")
-        remove_previous_output(out_bin, log)
-        conv.append([PYTHON, HDF5_TO_BIN, "--hdf5", h5, "--bin", out_bin])
-    run_jobs(conv, max_processes, log, cancel_event, label="conversion")
+    # Keep test fits separate from batch results. Only publish new files after
+    # every fit and conversion completes, so a failed or cancelled run keeps
+    # the previous results intact.
+    with tempfile.TemporaryDirectory(prefix=".staging-", dir=bin_folder) as staging:
+        staged = [os.path.join(staging, os.path.basename(o)) for o in outputs]
+        for cmd, path in zip(cmd_lines, staged):
+            cmd[cmd.index("--bin") + 1] = path
+        run_jobs(cmd_lines, max_processes, log, cancel_event, label="fit")
+        conv = [[PYTHON, HDF5_TO_BIN, "--hdf5", h5, "--bin", h5[:-5] + ".bin"] for h5 in staged]
+        run_jobs(conv, max_processes, log, cancel_event, label="conversion")
+        for src, dst in zip(staged, outputs):
+            os.replace(src, dst)
+            os.replace(src[:-5] + ".bin", dst[:-5] + ".bin")
     log(f"Done: {len(outputs)} movie(s) fitted.")
     return outputs
 

@@ -725,7 +725,7 @@ class Window(QtWidgets.QMainWindow):
 
     # ---- background jobs
     def isBusy(self):
-        return self._worker_thread is not None and self._worker_thread.isRunning()
+        return self._worker_thread is not None
 
     def startJob(self, title, steps, on_success=None):
         worker, thread = start_worker(self, steps)
@@ -737,7 +737,7 @@ class Window(QtWidgets.QMainWindow):
         worker.succeeded.connect(self._onJobSucceeded)
         worker.failed.connect(self._onJobFailed)
         worker.cancelled.connect(lambda: self.statusBar().showMessage(title + " cancelled.", 15000))
-        worker.done.connect(self._onJobDone)
+        thread.finished.connect(self._onJobDone)
         self.setRunning(True, title)
         self.appendLog(f"\n##### {title} started #####")
         thread.start()
@@ -778,7 +778,11 @@ class Window(QtWidgets.QMainWindow):
         self.setRunning(False)
         if self.progress_bar.format().endswith("…"):
             self.progress_bar.setFormat("Cancelled")
+        thread = self._worker_thread
         self._worker_thread = None
+        self._worker = None
+        if thread is not None:
+            thread.deleteLater()
 
     def cancelJob(self):
         if self._worker is not None and self.isBusy():
@@ -808,9 +812,10 @@ class Window(QtWidgets.QMainWindow):
 
     def closeEvent(self, event):
         if self.isBusy():
-            self._worker.cancel()
-            self._worker_thread.quit()
-            self._worker_thread.wait(5000)
+            self.cancelJob()
+            self.statusBar().showMessage("Stopping after the current stage. Close again when idle.")
+            event.ignore()
+            return
         self.cleanUp()
 
     def displayFrame(self, update_locs):
