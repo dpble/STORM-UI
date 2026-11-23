@@ -2,11 +2,11 @@
 
 # Form implementation generated from reading ui file 'advanced_settings_dialog.ui'
 #
-# Created by: PyQt5 UI code generator 5.10.1
+# Created by: PyQt6 UI code generator 5.10.1
 #
 # WARNING! All changes made in this file will be lost!
 
-from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets
 
 class Ui_Dialog(object):
     def setupUi(self, Dialog):
@@ -77,8 +77,8 @@ class Ui_Dialog(object):
         self.gridLayout750.addWidget(self.find750, 8, 0, 1, 1)
         self.gridLayout_5.addLayout(self.gridLayout750, 0, 0, 1, 1)
         self.line = QtWidgets.QFrame(Dialog)
-        self.line.setFrameShape(QtWidgets.QFrame.VLine)
-        self.line.setFrameShadow(QtWidgets.QFrame.Sunken)
+        self.line.setFrameShape(QtWidgets.QFrame.Shape.VLine)
+        self.line.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
         self.line.setObjectName("line")
         self.gridLayout_5.addWidget(self.line, 0, 1, 1, 1)
         self.gridLayout647 = QtWidgets.QGridLayout()
@@ -144,8 +144,8 @@ class Ui_Dialog(object):
         self.gridLayout647.addWidget(self.label_13, 1, 0, 1, 1)
         self.gridLayout_5.addLayout(self.gridLayout647, 0, 2, 1, 1)
         self.line_2 = QtWidgets.QFrame(Dialog)
-        self.line_2.setFrameShape(QtWidgets.QFrame.VLine)
-        self.line_2.setFrameShadow(QtWidgets.QFrame.Sunken)
+        self.line_2.setFrameShape(QtWidgets.QFrame.Shape.VLine)
+        self.line_2.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
         self.line_2.setObjectName("line_2")
         self.gridLayout_5.addWidget(self.line_2, 0, 3, 1, 1)
         self.gridLayout561 = QtWidgets.QGridLayout()
@@ -211,8 +211,8 @@ class Ui_Dialog(object):
         self.gridLayout561.addWidget(self.checkBox561, 7, 0, 1, 1)
         self.gridLayout_5.addLayout(self.gridLayout561, 0, 4, 1, 1)
         self.line_3 = QtWidgets.QFrame(Dialog)
-        self.line_3.setFrameShape(QtWidgets.QFrame.VLine)
-        self.line_3.setFrameShadow(QtWidgets.QFrame.Sunken)
+        self.line_3.setFrameShape(QtWidgets.QFrame.Shape.VLine)
+        self.line_3.setFrameShadow(QtWidgets.QFrame.Shadow.Sunken)
         self.line_3.setObjectName("line_3")
         self.gridLayout_5.addWidget(self.line_3, 0, 5, 1, 1)
         self.gridLayout488 = QtWidgets.QGridLayout()
@@ -333,5 +333,5 @@ if __name__ == "__main__":
     ui = Ui_Dialog()
     ui.setupUi(Dialog)
     Dialog.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 

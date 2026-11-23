@@ -14,13 +14,13 @@ import shutil
 import glob 
 import numpy as np 
 
-from qtmodern import styles
+from gui import dark_theme as styles  # replaces qtmodern (PyQt5 only)
 
-from PyQt5 import QtCore, QtGui, QtWidgets
-from PyQt5.QtWidgets import QGraphicsView
-from PyQt5.QtCore import Qt, QRectF, pyqtSignal, QT_VERSION_STR
-from PyQt5.QtGui import QImage, QPixmap, QPainterPath
-from PyQt5.QtWidgets import QGraphicsView, QGraphicsScene, QFileDialog
+from PyQt6 import QtCore, QtGui, QtWidgets
+from PyQt6.QtWidgets import QGraphicsView
+from PyQt6.QtCore import Qt, QRectF, pyqtSignal, QT_VERSION_STR
+from PyQt6.QtGui import QImage, QPixmap, QPainterPath
+from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QFileDialog
 
 
 import storm_analysis.sa_library.datareader as datareader
@@ -74,10 +74,10 @@ class InfoTable(QtWidgets.QWidget):
         self.table_widget.setRowCount(len(fields))
         for i, field in enumerate(fields):
             widget = QtWidgets.QTableWidgetItem(field)
-            widget.setFlags(QtCore.Qt.ItemIsEnabled)
+            widget.setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
             self.table_widget.setItem(i,0,widget)
             widget = QtWidgets.QTableWidgetItem("na")
-            widget.setFlags(QtCore.Qt.ItemIsEnabled)
+            widget.setFlags(QtCore.Qt.ItemFlag.ItemIsEnabled)
             self.table_widget.setItem(i,1,widget)
         self.table_widget.resizeColumnToContents(0)
 
@@ -280,8 +280,8 @@ class MovieView(QtWidgets.QGraphicsView):
         self.zoom_out = 1.0/self.zoom_in
 
         # UI initializiation.
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.MinimumExpanding,
-                                           QtWidgets.QSizePolicy.MinimumExpanding)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Policy.MinimumExpanding,
+                                           QtWidgets.QSizePolicy.Policy.MinimumExpanding)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
         sizePolicy.setHeightForWidth(self.sizePolicy().hasHeightForWidth())
@@ -289,14 +289,14 @@ class MovieView(QtWidgets.QGraphicsView):
         self.setMinimumSize(QtCore.QSize(200, 200))
         
         # Scroll Bar Behavior 
-        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
-        self.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         
         # Scene initialization.
         self.scene = QtWidgets.QGraphicsScene()
         self.setScene(self.scene)
         self.setMouseTracking(True)
-        self.setRenderHint(QtGui.QPainter.Antialiasing + QtGui.QPainter.SmoothPixmapTransform)
+        self.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing | QtGui.QPainter.RenderHint.SmoothPixmapTransform)
         self.scale(2.0, 2.0)
         
         # Tooltip.
@@ -304,23 +304,32 @@ class MovieView(QtWidgets.QGraphicsView):
        
         # Drag and Drop Functionality 
         self.setAcceptDrops(True)
-        self.setDragMode(QtWidgets.QGraphicsView.ScrollHandDrag)
+        self.setDragMode(QtWidgets.QGraphicsView.DragMode.ScrollHandDrag)
             
 
     def dragMoveEvent(self, event):
         pass 
         
+    @staticmethod
+    def droppedPath(mime):
+        # Use Qt's URL -> local path conversion. The old text()[8:] cut off
+        # 'file:///' and only gave a valid path on Windows (it dropped the
+        # leading '/' on Mac and Linux).
+        if mime.hasUrls() and mime.urls()[0].isLocalFile():
+            return mime.urls()[0].toLocalFile()
+        return None
+
     def dragEnterEvent(self, event):
-        if event.mimeData().hasText():
-            if event.mimeData().text().endswith(('.hdf5', '.bin', 'tif', 'dax', 'fits', 'spe')):
-                event.setAccepted(True)
-            else:
-                event.ignore()
+        path = self.droppedPath(event.mimeData())
+        if path and path.endswith(('.hdf5', '.bin', 'tif', 'dax', 'fits', 'spe')):
+            event.setAccepted(True)
         else:
             event.ignore()
         
     def dropEvent(self, event):
-        self.dropped.emit(event.mimeData().text()[8:]) #Return the actual filepath 
+        path = self.droppedPath(event.mimeData())
+        if path:
+            self.dropped.emit(path)
  # 
        
     def keyPressEvent(self, event):
@@ -342,8 +351,8 @@ class MovieView(QtWidgets.QGraphicsView):
         self.xyi_label.setText("{0:.2f}, {1:.2f}, {2:d}".format(x - 0.5, y - 0.5, i))
 
     def mousePressEvent(self, event):
-        if (event.button() == QtCore.Qt.LeftButton):
-            self.setDragMode(QGraphicsView.ScrollHandDrag)
+        if (event.button() == QtCore.Qt.MouseButton.LeftButton):
+            self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
             scenePos = self.mapToScene(event.pos())
             self.mouse_press.emit(scenePos.x(), scenePos.y())
             self.leftMouseButtonPressed.emit(scenePos.x(), scenePos.y())
@@ -355,8 +364,8 @@ class MovieView(QtWidgets.QGraphicsView):
         """
         QGraphicsView.mouseReleaseEvent(self, event)
         scenePos = self.mapToScene(event.pos())
-        if event.button() == Qt.LeftButton:
-            self.setDragMode(QGraphicsView.NoDrag)
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.setDragMode(QGraphicsView.DragMode.NoDrag)
             self.leftMouseButtonReleased.emit(scenePos.x(), scenePos.y())
         
 
@@ -381,7 +390,7 @@ class MovieView(QtWidgets.QGraphicsView):
         frame_RGB[:,:,2] = frame
         frame_RGB[:,:,3] = 255
 
-        self.image = QtGui.QImage(frame_RGB.data, w, h, QtGui.QImage.Format_RGB32)
+        self.image = QtGui.QImage(frame_RGB.data, w, h, QtGui.QImage.Format.Format_RGB32)
         self.image.ndarray1 = frame
         self.image.ndarray2 = frame_RGB
 
@@ -540,7 +549,7 @@ class Window(QtWidgets.QMainWindow):
             error_dialog.setWindowTitle("Error!") 
             message = 'Please enter an experiment folder!' if not experiment_folder else 'Please select fitting channels!'
             error_dialog.showMessage(message) 
-            error_dialog.exec_()
+            error_dialog.exec()
             return 
             
         # Pass the parameters to the fitting function
@@ -551,7 +560,7 @@ class Window(QtWidgets.QMainWindow):
             error_dialog = QtWidgets.QErrorMessage()
             error_dialog.setWindowTitle("Error!") 
             error_dialog.showMessage("Fitting has failed: " + str(e)) 
-            error_dialog.exec_() 
+            error_dialog.exec() 
             return 
         
         print('2')
@@ -559,7 +568,7 @@ class Window(QtWidgets.QMainWindow):
         msg = QtWidgets.QMessageBox()
         msg.setWindowTitle("Success")
         msg.setText('Process executed successfully!')
-        msg.exec_()
+        msg.exec()
 
     def runAnalysis(self):
         # Get number of processes 
@@ -592,7 +601,7 @@ class Window(QtWidgets.QMainWindow):
             elif len(alignment_channels) == 0:
                 message += "Please select alignment channels! \n" 
             error_dialog.showMessage(message) 
-            error_dialog.exec_()
+            error_dialog.exec()
             return 
             
             
@@ -645,7 +654,7 @@ class Window(QtWidgets.QMainWindow):
             error_dialog = QtWidgets.QErrorMessage()
             error_dialog.setWindowTitle("Error!") 
             error_dialog.showMessage("SCMOS Failed: " + str(e)) 
-            error_dialog.exec_() 
+            error_dialog.exec() 
             return 
         
         alignment_channel = None 
@@ -661,7 +670,7 @@ class Window(QtWidgets.QMainWindow):
             error_dialog = QtWidgets.QErrorMessage()
             error_dialog.setWindowTitle("Error!") 
             error_dialog.showMessage("XY Align Failed: " + str(e)) 
-            error_dialog.exec_() 
+            error_dialog.exec() 
             return 
         try:
             z_align_func.z_align(experiment_folder, alignment_channel) 
@@ -669,14 +678,14 @@ class Window(QtWidgets.QMainWindow):
             error_dialog = QtWidgets.QErrorMessage()
             error_dialog.setWindowTitle("Error!") 
             error_dialog.showMessage("Z Align Failed: " + str(e)) 
-            error_dialog.exec_() 
+            error_dialog.exec() 
             return 
             
         # If this is done running then just have a success box!
         msg = QtWidgets.QMessageBox()
         msg.setWindowTitle("Success")
         msg.setText('Process executed successfully!')
-        msg.exec_()    
+        msg.exec()    
             
     def updateDisplay(self, horizontalSlider, spinBox):
         spinBox.setValue(horizontalSlider.value())
@@ -686,29 +695,31 @@ class Window(QtWidgets.QMainWindow):
         self.ui.exp_lbl.setText(exp_folder)
 
     def open_input_parameters_dlg(self):
-        input_parameters_dlg = AdvancedSettingsDialog()
-        input_parameters_dlg.show()
+        # Keep a reference on the window. As a local variable the dialog was
+        # garbage collected as soon as this method returned, so it closed instantly.
+        self.input_parameters_dlg = AdvancedSettingsDialog()
+        self.input_parameters_dlg.show()
 
     def open_frame_range_dlg(self):
         frame_range_dlg = FrameRangeDialog()
-        frame_range_dlg.exec_()
+        frame_range_dlg.exec()
         frame_range_dlg.show()
         
     def showOverrideDialog(self, message):
         msgBox = QtWidgets.QMessageBox()
-        msgBox.setIcon(QtWidgets.QMessageBox.Information)
+        msgBox.setIcon(QtWidgets.QMessageBox.Icon.Information)
         msgBox.setText(message + "\n" + "Would you like to delete these files before running?")
         msgBox.setWindowTitle("Warning: Files Found!")
-        msgBox.setStandardButtons(QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No | QtWidgets.QMessageBox.Cancel)
+        msgBox.setStandardButtons(QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No | QtWidgets.QMessageBox.StandardButton.Cancel)
 
         returnValue = msgBox.exec()
-        if returnValue == QtWidgets.QMessageBox.Yes:
+        if returnValue == QtWidgets.QMessageBox.StandardButton.Yes:
             print('OK clicked')
             return 0
-        elif returnValue == QtWidgets.QMessageBox.No:
+        elif returnValue == QtWidgets.QMessageBox.StandardButton.No:
             print('No clicked')
             return 1
-        elif returnValue == QtWidgets.QMessageBox.Cancel:
+        elif returnValue == QtWidgets.QMessageBox.StandardButton.Cancel:
             print('Cancel clicked')
             return 2
         return -1 
@@ -913,17 +924,17 @@ class Window(QtWidgets.QMainWindow):
             self.locs_display_timer.start()
 
     def keyPressEvent(self, event):
-        if (event.key() == QtCore.Qt.Key_End):
+        if (event.key() == QtCore.Qt.Key.Key_End):
             self.incCurFrame(self.film_l)
-        if (event.key() == QtCore.Qt.Key_Home):
+        if (event.key() == QtCore.Qt.Key.Key_Home):
             self.incCurFrame(-self.film_l)
-        if (event.key() == QtCore.Qt.Key_Comma):
+        if (event.key() == QtCore.Qt.Key.Key_Comma):
             self.incCurFrame(-1)
-        if (event.key() == QtCore.Qt.Key_Period):
+        if (event.key() == QtCore.Qt.Key.Key_Period):
             self.incCurFrame(1)
-        if (event.key() == QtCore.Qt.Key_K):
+        if (event.key() == QtCore.Qt.Key.Key_K):
             self.incCurFrame(-200)
-        if (event.key() == QtCore.Qt.Key_L):
+        if (event.key() == QtCore.Qt.Key.Key_L):
             self.incCurFrame(200)
 
     def quit(self):
@@ -956,6 +967,6 @@ if (__name__ == "__main__"):
     window = Window(directory = directory)
 
     window.show()
-    app.exec_()
+    app.exec()
     app.deleteLater()
     sys.exit()

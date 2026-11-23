@@ -2,17 +2,17 @@
 
 # Form implementation generated from reading ui file 'frame_range_dialog.ui'
 #
-# Created by: PyQt5 UI code generator 5.10.1
+# Created by: PyQt6 UI code generator 5.10.1
 #
 # WARNING! All changes made in this file will be lost!
 
-from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets
 
 class Ui_Dialog(object):
     def setupUi(self, Dialog):
         Dialog.setObjectName("Dialog")
         Dialog.resize(408, 297)
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
         sizePolicy.setHeightForWidth(Dialog.sizePolicy().hasHeightForWidth())
@@ -120,7 +120,7 @@ class Ui_Dialog(object):
         self.sf_spinBox_647.setObjectName("sf_spinBox_647")
         self.sf_spinBox_647.setMaximum(10000000)
         self.gridLayout.addWidget(self.sf_spinBox_647, 3, 1, 1, 1)
-        spacerItem = QtWidgets.QSpacerItem(20, 40, QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Expanding)
+        spacerItem = QtWidgets.QSpacerItem(20, 40, QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Expanding)
         self.gridLayout.addItem(spacerItem, 8, 1, 1, 1)
         self.cancelBtn = QtWidgets.QPushButton(Dialog)
         self.cancelBtn.setObjectName("cancelBtn")
@@ -156,5 +156,5 @@ if __name__ == "__main__":
     ui = Ui_Dialog()
     ui.setupUi(Dialog)
     Dialog.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 

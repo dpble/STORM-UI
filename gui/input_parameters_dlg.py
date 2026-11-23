@@ -1,8 +1,8 @@
 ﻿#!/usr/bin/python
 # -*- coding: utf-8 -*-
-from PyQt5.QtGui import *
-from PyQt5.QtCore import *
-from PyQt5.QtWidgets import *
+from PyQt6.QtGui import *
+from PyQt6.QtCore import *
+from PyQt6.QtWidgets import *
 
 import os
 import sys
@@ -14,7 +14,7 @@ import lxml.etree as lxmlET
 from gui import input_parameters_dlg_ui
 from gui.advanced_settings_dlg import AdvancedSettingsDialog
 
-from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets
 
 if hasattr(QtCore.Qt, 'AA_EnableHighDpiScaling'):
     QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
@@ -60,8 +60,8 @@ class InputParametersDialog(QDialog):
         advanced_settings_dlg.show()
 
     def findXML(self, label):
-        options = QFileDialog.Options()
-        options |= QFileDialog.DontUseNativeDialog
+        options = QFileDialog.Option(0)  # PyQt6: Options() flag constructor removed
+        options |= QFileDialog.Option.DontUseNativeDialog
         (fileName, _) = QFileDialog.getOpenFileName(self,
                 'QFileDialog.getOpenFileName()', '', 'XML Files (*.xml)'
                 , options=options)
@@ -106,11 +106,11 @@ class InputParametersDialog(QDialog):
         msg = QMessageBox()
         msg.setWindowTitle("Success")
         msg.setText('{} XMLs were updated!'.format(counter))
-        msg.exec_()
+        msg.exec()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     ex = InputParametersDialog()
     ex.show()
-    app.exec_()
+    app.exec()
     sys.exit()

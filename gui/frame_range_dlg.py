@@ -1,8 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-from PyQt5.QtGui import *
-from PyQt5.QtCore import *
-from PyQt5.QtWidgets import *
+from PyQt6.QtGui import *
+from PyQt6.QtCore import *
+from PyQt6.QtWidgets import *
 
 import os
 import sys
@@ -11,6 +11,9 @@ from functools import partial
 import xml.etree.ElementTree as ET
 import lxml.etree as lxmlET
 import yaml 
+
+# configs/XMLs.yml, found relative to this repo (was hardcoded to one lab PC)
+XMLS_YML = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'configs', 'XMLs.yml')
 
 from .frame_range_dlg_ui import * 
 # import frame_range_dlg_ui 
@@ -32,8 +35,8 @@ class FrameRangeDialog(QDialog):
         self.ui.okBtn.clicked.connect(self.send_params)
         self.ui.cancelBtn.clicked.connect(self.cancel)
         
-        with open(r'C:\Users\Vatsal\QT_Projects\STORM_GUI\configs\XMLs.yml') as f:
-            self.config = yaml.load(f)
+        with open(XMLS_YML) as f:
+            self.config = yaml.safe_load(f)
 
   
     def send_params(self):
@@ -65,7 +68,7 @@ class FrameRangeDialog(QDialog):
         msg = QMessageBox()
         msg.setWindowTitle("Success")
         msg.setText('Frame ranges are set!')
-        msg.exec_()
+        msg.exec()
         
         self.close() 
 
@@ -78,5 +81,5 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     ex = FrameRangeDialog()
     ex.show()
-    app.exec_()
+    app.exec()
     sys.exit()

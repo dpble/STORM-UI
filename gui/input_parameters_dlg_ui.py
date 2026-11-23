@@ -2,17 +2,17 @@
 
 # Form implementation generated from reading ui file 'input_parameters_dialog.ui'
 #
-# Created by: PyQt5 UI code generator 5.10.1
+# Created by: PyQt6 UI code generator 5.10.1
 #
 # WARNING! All changes made in this file will be lost!
 
-from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets
 
 class Ui_Dialog(object):
     def setupUi(self, Dialog):
         Dialog.setObjectName("Dialog")
         Dialog.resize(488, 242)
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
         sizePolicy.setHeightForWidth(Dialog.sizePolicy().hasHeightForWidth())
@@ -23,18 +23,18 @@ class Ui_Dialog(object):
         self.formLayout.setObjectName("formLayout")
         self.label = QtWidgets.QLabel(Dialog)
         self.label.setObjectName("label")
-        self.formLayout.setWidget(0, QtWidgets.QFormLayout.LabelRole, self.label)
+        self.formLayout.setWidget(0, QtWidgets.QFormLayout.ItemRole.LabelRole, self.label)
         self.sf = QtWidgets.QSpinBox(Dialog)
         self.sf.setObjectName("sf")
         self.sf.setMaximum(100000)
-        self.formLayout.setWidget(0, QtWidgets.QFormLayout.FieldRole, self.sf)
+        self.formLayout.setWidget(0, QtWidgets.QFormLayout.ItemRole.FieldRole, self.sf)
         self.label_2 = QtWidgets.QLabel(Dialog)
         self.label_2.setObjectName("label_2")
-        self.formLayout.setWidget(1, QtWidgets.QFormLayout.LabelRole, self.label_2)
+        self.formLayout.setWidget(1, QtWidgets.QFormLayout.ItemRole.LabelRole, self.label_2)
         self.ef = QtWidgets.QSpinBox(Dialog)
         self.ef.setObjectName("ef")
         self.ef.setMaximum(100000)
-        self.formLayout.setWidget(1, QtWidgets.QFormLayout.FieldRole, self.ef)
+        self.formLayout.setWidget(1, QtWidgets.QFormLayout.ItemRole.FieldRole, self.ef)
         self.gridLayout_2.addLayout(self.formLayout, 0, 0, 1, 2)
         self.gridLayout = QtWidgets.QGridLayout()
         self.gridLayout.setObjectName("gridLayout")
@@ -58,7 +58,7 @@ class Ui_Dialog(object):
         self.find750.setObjectName("find750")
         self.gridLayout.addWidget(self.find750, 0, 3, 1, 1)
         self.pathLbl750 = QtWidgets.QLabel(Dialog)
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Minimum)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Minimum)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
         sizePolicy.setHeightForWidth(self.pathLbl750.sizePolicy().hasHeightForWidth())
@@ -88,7 +88,7 @@ class Ui_Dialog(object):
         self.find647.setObjectName("find647")
         self.gridLayout.addWidget(self.find647, 1, 3, 1, 1)
         self.pathLbl647 = QtWidgets.QLabel(Dialog)
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Minimum)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Minimum)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
         sizePolicy.setHeightForWidth(self.pathLbl647.sizePolicy().hasHeightForWidth())
@@ -118,7 +118,7 @@ class Ui_Dialog(object):
         self.find561.setObjectName("find561")
         self.gridLayout.addWidget(self.find561, 2, 3, 1, 1)
         self.pathLbl561 = QtWidgets.QLabel(Dialog)
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Minimum)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Minimum)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
         sizePolicy.setHeightForWidth(self.pathLbl561.sizePolicy().hasHeightForWidth())
@@ -148,7 +148,7 @@ class Ui_Dialog(object):
         self.find488.setObjectName("find488")
         self.gridLayout.addWidget(self.find488, 3, 3, 1, 1)
         self.pathLbl488 = QtWidgets.QLabel(Dialog)
-        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Minimum, QtWidgets.QSizePolicy.Minimum)
+        sizePolicy = QtWidgets.QSizePolicy(QtWidgets.QSizePolicy.Policy.Minimum, QtWidgets.QSizePolicy.Policy.Minimum)
         sizePolicy.setHorizontalStretch(0)
         sizePolicy.setVerticalStretch(0)
         sizePolicy.setHeightForWidth(self.pathLbl488.sizePolicy().hasHeightForWidth())
@@ -200,5 +200,5 @@ if __name__ == "__main__":
     ui = Ui_Dialog()
     ui.setupUi(Dialog)
     Dialog.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 

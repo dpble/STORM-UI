@@ -1,8 +1,8 @@
 ﻿#!/usr/bin/python
 # -*- coding: utf-8 -*-
-from PyQt5.QtGui import *
-from PyQt5.QtCore import *
-from PyQt5.QtWidgets import *
+from PyQt6.QtGui import *
+from PyQt6.QtCore import *
+from PyQt6.QtWidgets import *
 
 import os
 import sys
@@ -12,9 +12,12 @@ import xml.etree.ElementTree as ET
 import lxml.etree as lxmlET
 import yaml 
 
+# configs/XMLs.yml, found relative to this repo (was hardcoded to one lab PC)
+XMLS_YML = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'configs', 'XMLs.yml')
+
 from .advanced_settings_dlg_ui import * 
 
-from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets
 
 if hasattr(QtCore.Qt, 'AA_EnableHighDpiScaling'):
     QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
@@ -54,8 +57,8 @@ class AdvancedSettingsDialog(QDialog):
         self.checkBoxes = [self.ui.checkBox488, self.ui.checkBox561, self.ui.checkBox647, self.ui.checkBox750]
         
         # Auto-Load 
-        with open(r'C:\Users\Vatsal\QT_Projects\STORM_GUI\configs\XMLs.yml') as f:
-            self.config = yaml.load(f)
+        with open(XMLS_YML) as f:
+            self.config = yaml.safe_load(f)
         self.findXML(self.ui.pathLbl488, self.ui.thresh488, 0, self.config[488])
         self.findXML(self.ui.pathLbl561, self.ui.thresh561, 1, self.config[561])
         self.findXML(self.ui.pathLbl647, self.ui.thresh647, 2, self.config[647])
@@ -67,8 +70,8 @@ class AdvancedSettingsDialog(QDialog):
         print('pressed') 
         if fileName is None:
             print('NONE') 
-            options = QFileDialog.Options()
-            options |= QFileDialog.DontUseNativeDialog
+            options = QFileDialog.Option(0)  # PyQt6: Options() flag constructor removed
+            options |= QFileDialog.Option.DontUseNativeDialog
             (fileName, _) = QFileDialog.getOpenFileName(self,
                     'QFileDialog.getOpenFileName()', '', 'XML Files (*.xml)'
                     , options=options)
@@ -160,7 +163,7 @@ class AdvancedSettingsDialog(QDialog):
         msg = QMessageBox()
         msg.setWindowTitle("Success")
         msg.setText('{} XMLs were updated!'.format(counter))
-        msg.exec_()
+        msg.exec()
         
         self.close()
 
@@ -168,5 +171,5 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     ex = AdvancedSettingsDialog()
     ex.show()
-    app.exec_()
+    app.exec()
     sys.exit()
