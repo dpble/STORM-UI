@@ -66,6 +66,10 @@ class InfoTable(QtWidgets.QWidget):
         # Setup info table.
         self.table_widget.setColumnCount(2)
 
+    def clearValues(self):
+        for row in range(self.table_widget.rowCount()):
+            self.table_widget.item(row, 1).setText("na")
+
     def hideFields(self):
         self.table_widget.setRowCount(0)
 
@@ -93,6 +97,9 @@ class InfoTable(QtWidgets.QWidget):
                 self.table_widget.item(i,1).setText(val)
 
 
+PIXEL_CENTER_OFFSET = 0.5
+
+
 class MoleculeItem(QtWidgets.QGraphicsEllipseItem):
     """
     Molecule item for the graphics scene.
@@ -110,8 +117,8 @@ class MoleculeItem(QtWidgets.QGraphicsEllipseItem):
             self.sel_pen = QtGui.QPen(QtGui.QColor(100,255,200))
             self.sel_pen.setWidthF(0.6)
 
-        x = x - 0.5*w - 0.5
-        y = y - 0.5*h - 0.5
+        x = x + PIXEL_CENTER_OFFSET - 0.5*w
+        y = y + PIXEL_CENTER_OFFSET - 0.5*h
         QtWidgets.QGraphicsEllipseItem.__init__(self, x, y, w, h)
         self.setPen(self.pen)
 
@@ -153,8 +160,8 @@ class MoleculeList(object):
                 xs = 1.5*np.ones(self.locs["x"].size)
                 ys = 1.5*np.ones(self.locs["x"].size)
             for i in range(self.locs["x"].size):
-                self.mol_items.append(MoleculeItem(self.locs["x"][i] + 1,
-                                                   self.locs["y"][i] + 1,
+                self.mol_items.append(MoleculeItem(self.locs["x"][i],
+                                                   self.locs["y"][i],
                                                    xs[i]*6.0,
                                                    ys[i]*6.0,
                                                    self.mtype))
@@ -169,8 +176,8 @@ class MoleculeList(object):
         if bool(self.locs) and (self.locs["x"].size > 0):
 
             # Find the one nearest to px, py.
-            dx = self.locs["x"] - px - 0.5
-            dy = self.locs["y"] - py - 0.5
+            dx = self.locs["x"] + PIXEL_CENTER_OFFSET - px
+            dy = self.locs["y"] + PIXEL_CENTER_OFFSET - py
             dist = dx*dx+dy*dy
             closest_index = np.argmin(dist)
 
@@ -407,6 +414,17 @@ class MovieView(QtWidgets.QGraphicsView):
             h, w = self.data.shape
             self.fitInView(QtCore.QRectF(0, 0, w, h), QtCore.Qt.AspectRatioMode.KeepAspectRatio)
 
+    def showUnreadableFrame(self, number):
+        self.data = None
+        self.image = None
+        self.xyi_label.clear()
+        self.scene.clear()
+        message = self.scene.addSimpleText(f"Frame {number} could not be read")
+        message.setBrush(self.palette().text())
+        self.scene.setSceneRect(message.boundingRect().adjusted(-8, -8, 8, 8))
+        self.resetTransform()
+        self.centerOn(message)
+
     def newFrame(self, frame, locs1, locs2, fmin, fmax):
         self.scene.clear()
 
@@ -415,7 +433,7 @@ class MovieView(QtWidgets.QGraphicsView):
         self.data = frame.copy()
 
         # scale image.
-        frame = 255.0*(frame-fmin)/(fmax-fmin)
+        frame = 255.0*(frame-fmin)/max(1, fmax-fmin)
         frame[(frame > 255.0)] = 255.0
         frame[(frame < 0.0)] = 0.0
 
@@ -433,7 +451,8 @@ class MovieView(QtWidgets.QGraphicsView):
         self.image.ndarray2 = frame_RGB
 
         # add to scene
-        self.scene.addPixmap(QtGui.QPixmap.fromImage(self.image))
+        image_item = self.scene.addPixmap(QtGui.QPixmap.fromImage(self.image))
+        self.scene.setSceneRect(image_item.boundingRect())
 
         # add localizations from file 1
         for loc in locs1:
@@ -814,11 +833,23 @@ class Window(QtWidgets.QMainWindow):
             # Get the current frame.
             try:
                 frame = self.movie_file.loadAFrame(self.cur_frame).astype(float)
+                if frame.shape != (self.film_y, self.film_x) or not np.isfinite(frame).all():
+                    raise ValueError("invalid image dimensions or values")
             except Exception as exc:
-                self.showError("Could not read movie frame", f"{self.ui.mov_path_lbl.text()}: {exc}")
-                return
+                self.locs_display_timer.stop()
+                for locs in (self.locs1_list, self.locs2_list):
+                    if locs is not None:
+                        locs.clearLocs()
+                self.locs1_table.clearValues()
+                self.locs2_table.clearValues()
+                number = self.cur_frame + 1
+                self.movie_view.showUnreadableFrame(number)
+                self.statusBar().showMessage(f"Frame {number} could not be read: {exc}")
+                return False
 
             # Scene.clear() deletes older Qt items. Never leave hit-testing pointed at them.
+            self.locs1_table.clearValues()
+            self.locs2_table.clearValues()
             nm_per_pixel = self.ui.nmPerPixelSpinBox.value()
             overlays = []
             for locs in (self.locs1_list, self.locs2_list):
@@ -839,6 +870,7 @@ class Window(QtWidgets.QMainWindow):
                                      locs2,
                                      self.ui.minSpinBox.value(),
                                      self.ui.maxSpinBox.value())
+            return True
                                      
     def handleDragDrop(self, file):
         if file.lower().endswith(('.bin', '.hdf5')):
@@ -890,7 +922,7 @@ class Window(QtWidgets.QMainWindow):
                 raise ValueError("invalid movie dimensions or frame range")
             for n in {0, first_frame, length - 1}:
                 frame = reader.loadAFrame(n)
-                if frame.shape != (height, width) or not np.isfinite(frame).any():
+                if frame.shape != (height, width) or not np.isfinite(frame).all():
                     raise ValueError(f"frame {n + 1} has invalid image data")
         except Exception as exc:
             if reader is not None:
@@ -970,16 +1002,16 @@ class Window(QtWidgets.QMainWindow):
         
     def handleFrameSpinBox(self):
         self.cur_frame = int(self.ui.frame_spin_box.value()) - 1  # box is 1-indexed, cur_frame is 0-indexed
-        self.displayFrame(False)
-        self.locs_display_timer.start()
+        if self.displayFrame(False):
+            self.locs_display_timer.start()
 
     def handleRangeChange(self, range_min, range_max):
         # The range slider sends floats. PyQt5 rounded them silently; PyQt6 raises
         # TypeError, which crashed the app on any contrast slider drag.
         self.ui.minSpinBox.setValue(int(round(range_min)))
         self.ui.maxSpinBox.setValue(int(round(range_max)))
-        self.displayFrame(False)
-        self.locs_display_timer.start()
+        if self.displayFrame(False):
+            self.locs_display_timer.start()
 
     def incCurFrame(self, amount):
         self.cur_frame += amount
@@ -992,9 +1024,11 @@ class Window(QtWidgets.QMainWindow):
                 self.locs1_list.clearLocs()
             if (self.locs2_list is not None):
                 self.locs2_list.clearLocs()
+            blocker = QtCore.QSignalBlocker(self.ui.frame_spin_box)
             self.ui.frame_spin_box.setValue(self.cur_frame+1)
-            self.displayFrame(False)
-            self.locs_display_timer.start()
+            del blocker
+            if self.displayFrame(False):
+                self.locs_display_timer.start()
 
     def keyPressEvent(self, event):
         if (event.key() == QtCore.Qt.Key.Key_End):

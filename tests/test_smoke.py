@@ -114,3 +114,51 @@ def test_load_localizations_overlay(app, fitted_hdf5):
     w.updateInfo(1, 1)
     w.grab().save(os.path.join(OUT, "locs_overlay.png"))
     w.close()
+
+
+def test_click_at_drawn_peak_center_selects_that_peak(app):
+    import numpy as np
+    from main import MoleculeList
+
+    class TwoPeaks(MoleculeList):
+        def loadLocalizations(self, frame_number, nm_per_pixel):
+            return {"x": np.array([10.0, 11.0]), "y": np.array([10.0, 11.0])}
+
+    peaks = TwoPeaks()
+    items = peaks.createMolItems(0, 155)
+    for index in (0, 1, 0):
+        center = items[index].rect().center()
+        assert peaks.getClosest(center.x(), center.y())["x"] == 10 + index
+
+
+def test_unreadable_frame_clears_image_overlays_and_inspector(app, fitted_hdf5, monkeypatch):
+    w = make_window(app)
+    try:
+        assert w.loadMovieFile(TEST_DAX)
+        assert w.loadLocalizations(fitted_hdf5, 1)
+        w.displayFrame(True)
+        assert w.locs1_list.mol_items
+        w.updateInfo(10, 10)
+        read = w.movie_file.loadAFrame
+
+        def read_frame(frame):
+            if frame == 1:
+                raise OSError("broken frame")
+            return read(frame)
+
+        monkeypatch.setattr(w.movie_file, "loadAFrame", read_frame)
+        w.ui.frame_spin_box.setValue(2)
+        assert w.cur_frame == 1
+        assert w.movie_view.data is None
+        assert not w.locs1_list.mol_items
+        assert not w.locs_display_timer.isActive()
+        items = w.movie_view.scene.items()
+        assert len(items) == 1 and items[0].text() == "Frame 2 could not be read"
+        table = w.locs1_table.table_widget
+        assert all(table.item(row, 1).text() == "na" for row in range(table.rowCount()))
+        w.ui.frame_spin_box.setValue(3)
+        w.displayFrame(True)
+        assert w.cur_frame == 2 and w.movie_view.data is not None
+        assert w.locs1_list.mol_items
+    finally:
+        w.close()
